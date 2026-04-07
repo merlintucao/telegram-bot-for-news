@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram Truth Social News Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/telegram-bot-for-news
+EnvironmentFile=/opt/telegram-bot-for-news/.env
+ExecStart=/usr/bin/python3 -m news_bot run --env-file /opt/telegram-bot-for-news/.env
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

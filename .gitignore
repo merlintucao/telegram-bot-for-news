@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+data/
+truthsocial_cookies.json
+truthsocial_cookies.txt
