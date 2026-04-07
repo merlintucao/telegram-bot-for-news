@@ -221,6 +221,10 @@ class ServiceTests(unittest.TestCase):
     def test_format_post_message_contains_original_link(self) -> None:
         message = format_post_message(make_post("101", "hello world"))
         self.assertTrue(message.startswith("🚨 BREAKING from Donald Trump"))
+        self.assertIn(
+            "🚨 BREAKING from Donald Trump\n\nPosted: 07/04/2026 15:00\nLink: https://truthsocial.com/@realDonaldTrump/posts/101",
+            message,
+        )
         self.assertIn("hello world", message)
         self.assertIn("Link: https://truthsocial.com/@realDonaldTrump/posts/101", message)
 
@@ -242,6 +246,7 @@ class ServiceTests(unittest.TestCase):
             translated_text="xin chao the gioi",
         )
 
+        self.assertIn("Posted: 07/04/2026 15:00", caption)
         self.assertIn("xin chao the gioi", caption)
         self.assertIn("Link: https://truthsocial.com/@realDonaldTrump/posts/101", caption)
 

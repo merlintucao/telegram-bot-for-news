@@ -72,6 +72,12 @@ def _format_posted_at(created_at: str) -> str:
 def format_post_message(post: SourcePost, translated_text: str | None = None) -> str:
     lines = [_format_header(post)]
 
+    if post.created_at:
+        lines.extend(["", f"Posted: {_format_posted_at(post.created_at)}"])
+
+    if post.url:
+        lines.append(f"Link: {post.url}")
+
     snippet = translated_text or _post_caption_text(post)
     if snippet:
         lines.extend(["", snippet])
@@ -80,23 +86,23 @@ def format_post_message(post: SourcePost, translated_text: str | None = None) ->
         lines.extend(["", "Media:"])
         lines.extend(post.media_urls[:3])
 
-    if post.created_at:
-        lines.append("")
-        lines.append(f"Posted: {_format_posted_at(post.created_at)}")
-
-    if post.url:
-        lines.append(f"Link: {post.url}")
-
     return trim_message("\n".join(lines))
 
 
 def format_post_caption(post: SourcePost, translated_text: str | None = None) -> str:
     lines = [_format_header(post)]
+
+    info_lines: list[str] = []
+    if post.created_at:
+        info_lines.append(f"Posted: {_format_posted_at(post.created_at)}")
+    if post.url:
+        info_lines.append(f"Link: {post.url}")
+    if info_lines:
+        lines.extend(["", *info_lines])
+
     snippet = translated_text or _post_caption_text(post)
     if snippet:
         lines.extend(["", snippet])
-    if post.url:
-        lines.extend(["", f"Link: {post.url}"])
     return trim_message("\n".join(lines), limit=1024)
 
 
