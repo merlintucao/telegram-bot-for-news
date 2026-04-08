@@ -526,8 +526,7 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("Ông Donald Trump cho rằng Một ngày trọng đại cho hòa bình thế giới.", message)
         self.assertIn("Iran muốn điều đó xảy ra, họ đã chịu đủ rồi!", message)
         self.assertIn("Hoa Kỳ sẽ hỗ trợ tình trạng ùn tắc giao thông tại eo biển Hormuz.", message)
-        self.assertIn("Iran có thể bắt đầu quá trình tái thiết.", message)
-        self.assertIn("Đây có thể là thời kỳ hoàng kim của Trung Đông!", message)
+        self.assertNotIn("Iran có thể bắt đầu quá trình tái thiết.", message)
 
     def test_translation_is_applied_before_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

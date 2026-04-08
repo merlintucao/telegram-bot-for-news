@@ -118,7 +118,12 @@ def _rewrite_trump_summary_vi(sentences: list[str], limit: int) -> str:
     return _truncate_sentence(" ".join(summary_parts), limit)
 
 
-def _summarize_caption(text: str, limit: int = 260, source_id: str = "") -> str:
+def _summarize_caption(
+    text: str,
+    limit: int = 220,
+    source_id: str = "",
+    max_sentences: int = 3,
+) -> str:
     cleaned = _normalize_spaces(URL_PATTERN.sub("", text))
     if not cleaned:
         return ""
@@ -138,6 +143,8 @@ def _summarize_caption(text: str, limit: int = 260, source_id: str = "") -> str:
             break
         compact_sentences.append(sentence)
         current_length = projected
+        if len(compact_sentences) >= max_sentences:
+            break
     if not compact_sentences:
         return _truncate_sentence(cleaned, limit)
     if source_id == "truthsocial:realDonaldTrump":
@@ -278,8 +285,9 @@ def _build_summary_lines(
     summary_lines: list[str] = []
     caption_summary = _summarize_caption(
         translated_text or _post_caption_text(post),
-        limit=700,
+        limit=220,
         source_id=post.source_id,
+        max_sentences=3,
     )
     if caption_summary:
         summary_lines.append(caption_summary)
