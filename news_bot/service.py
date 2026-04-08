@@ -87,33 +87,50 @@ def _drop_terminal_punctuation(text: str) -> str:
     return text.rstrip(" .!?:;")
 
 
-def _lowercase_first_char(text: str) -> str:
-    if not text:
-        return text
-    return text[0].lower() + text[1:]
+def _summary_clause(text: str) -> str:
+    cleaned = _normalize_spaces(_drop_terminal_punctuation(text))
+    cleaned = re.sub(r"\b[Tt]ổng thống\s+DONALD J\.?\s*TRUMP\b", "", cleaned).strip(" ,")
+    cleaned = re.sub(r"\((?=[^)]*[A-ZÀ-Ỹ]{4,})[^)]*\)", "", cleaned).strip(" ,")
+    cleaned = re.sub(r"[“”\"']{2,}", "", cleaned)
+    return _normalize_spaces(cleaned)
+
+
+def _brief_clause(text: str, limit: int) -> str:
+    cleaned = _summary_clause(text)
+    if len(cleaned) <= limit:
+        return cleaned
+
+    for separator in (",", ";", ":"):
+        head, found, _tail = cleaned.partition(separator)
+        if found and len(head.strip()) >= 40:
+            return head.strip()
+
+    return _truncate_sentence(cleaned, limit)
 
 
 def _rewrite_trump_summary_vi(sentences: list[str], limit: int) -> str:
     if not sentences:
         return ""
 
-    lead = _drop_terminal_punctuation(sentences[0])
+    lead = _brief_clause(sentences[0], min(120, limit))
     if lead:
-        summary_parts = [f"Ông Donald Trump cho rằng {lead}."]
+        summary_parts = [f"Ông Donald Trump cho biết {lead}."]
     else:
         summary_parts = []
 
-    for sentence in sentences[1:]:
-        sentence = sentence.strip()
-        if not sentence:
-            continue
-        projected = " ".join(summary_parts + [sentence]).strip()
-        if len(projected) > limit and len(summary_parts) >= 2:
-            break
+    support_clauses = [
+        clause
+        for clause in (_brief_clause(sentence, 110) for sentence in sentences[1:])
+        if clause
+    ]
+    if support_clauses:
+        joined = "; ".join(support_clauses[:2])
+        support_sentence = f"Ông cũng nói {joined}."
+        projected = " ".join(summary_parts + [support_sentence]).strip()
         if len(projected) > limit:
-            summary_parts.append(_truncate_sentence(sentence, max(20, limit - len(" ".join(summary_parts)))))
-            break
-        summary_parts.append(sentence)
+            remaining = max(30, limit - len(" ".join(summary_parts)) - 1)
+            support_sentence = _truncate_sentence(support_sentence, remaining)
+        summary_parts.append(support_sentence)
 
     return _truncate_sentence(" ".join(summary_parts), limit)
 

@@ -278,7 +278,7 @@ class ServiceTests(unittest.TestCase):
         )
 
         self.assertIn("🚨 BREAKING from Donald Trump", message)
-        self.assertIn("Ông Donald Trump cho rằng xin chao the gioi.", message)
+        self.assertIn("Ông Donald Trump cho biết xin chao the gioi.", message)
         self.assertNotIn("hello world", message)
         self.assertNotIn("Link:", message)
         self.assertNotIn("Vietnamese caption:", message)
@@ -291,7 +291,7 @@ class ServiceTests(unittest.TestCase):
         )
 
         self.assertIn("Posted: 15:00 07/04/2026", caption)
-        self.assertIn("Ông Donald Trump cho rằng xin chao the gioi.", caption)
+        self.assertIn("Ông Donald Trump cho biết xin chao the gioi.", caption)
         self.assertNotIn("Link:", caption)
 
     def test_format_post_message_uses_vietnam_time(self) -> None:
@@ -499,7 +499,7 @@ class ServiceTests(unittest.TestCase):
 
         message = format_post_message(post)
 
-        self.assertIn("Ông Donald Trump cho rằng Two more major pharmaceutical companies to launch products through TrumpRx.", message)
+        self.assertIn("Ông Donald Trump cho biết Two more major pharmaceutical companies to launch products through TrumpRx.", message)
         self.assertIn("Link summary: Two more major pharmaceutical companies to launch products through TrumpRx:", message)
 
     def test_format_post_message_keeps_multiple_sentences_for_long_story(self) -> None:
@@ -523,9 +523,8 @@ class ServiceTests(unittest.TestCase):
             ),
         )
 
-        self.assertIn("Ông Donald Trump cho rằng Một ngày trọng đại cho hòa bình thế giới.", message)
-        self.assertIn("Iran muốn điều đó xảy ra, họ đã chịu đủ rồi!", message)
-        self.assertIn("Hoa Kỳ sẽ hỗ trợ tình trạng ùn tắc giao thông tại eo biển Hormuz.", message)
+        self.assertIn("Ông Donald Trump cho biết Một ngày trọng đại cho hòa bình thế giới.", message)
+        self.assertIn("Ông cũng nói Iran muốn điều đó xảy ra, họ đã chịu đủ rồi; Hoa Kỳ sẽ hỗ trợ tình trạng ùn tắc giao thông tại eo biển Hormuz.", message)
         self.assertNotIn("Iran có thể bắt đầu quá trình tái thiết.", message)
 
     def test_translation_is_applied_before_delivery(self) -> None:
@@ -578,7 +577,7 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(summary.sent_count, 1)
             self.assertEqual(translator.calls, ["hello world"])
             self.assertIn("🚨 BREAKING from Donald Trump", sender.messages[0])
-            self.assertIn("Ông Donald Trump cho rằng xin chao the gioi.", sender.messages[0])
+            self.assertIn("Ông Donald Trump cho biết xin chao the gioi.", sender.messages[0])
             self.assertNotIn("hello world", sender.messages[0])
 
     def test_translation_retries_before_delivery(self) -> None:
