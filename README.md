@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Telegram Bot for News
 
 This bot polls Donald Trump's Truth Social account and can also ingest RSS/Atom news feeds, then forwards new items to a Telegram chat.
@@ -255,3 +256,6 @@ sudo systemctl status news-bot
 
 - Truth Social can change its anti-bot behavior at any time. This build now starts with the public account flow first and can fall back to cookies if anonymous polling is challenged.
 - If you track `realDonaldTrump`, the config now defaults `TRUTHSOCIAL_ACCOUNT_ID` to `107780257626128497`. You can still override it manually in `.env`.
+=======
+# telegram-bot-for-news
+>>>>>>> origin/main
