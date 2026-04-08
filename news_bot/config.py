@@ -105,6 +105,14 @@ class AppConfig:
     truthsocial_auth_mode: str = "auto"
     translation_target_language: str = "vi"
     translation_endpoint: str = "https://translate.googleapis.com/translate_a/single"
+    translation_retry_attempts: int = 3
+    translation_retry_backoff_seconds: int = 1
+    translation_failure_placeholder: str = "Ban dich tam thoi chua san sang."
+    image_summary_enabled: bool = False
+    image_summary_provider: str = "openai"
+    image_summary_model: str = "gpt-4.1-mini"
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
 
     @classmethod
     def from_env(cls, env_file: str = ".env") -> "AppConfig":
@@ -163,4 +171,23 @@ class AppConfig:
                 "TRANSLATION_ENDPOINT",
                 "https://translate.googleapis.com/translate_a/single",
             ).strip(),
+            translation_retry_attempts=max(1, _get_int("TRANSLATION_RETRY_ATTEMPTS", 3)),
+            translation_retry_backoff_seconds=max(
+                0, _get_int("TRANSLATION_RETRY_BACKOFF_SECONDS", 1)
+            ),
+            translation_failure_placeholder=(
+                os.getenv(
+                    "TRANSLATION_FAILURE_PLACEHOLDER",
+                    "Ban dich tam thoi chua san sang.",
+                ).strip()
+                or "Ban dich tam thoi chua san sang."
+            ),
+            image_summary_enabled=_get_bool("IMAGE_SUMMARY_ENABLED", False),
+            image_summary_provider=os.getenv("IMAGE_SUMMARY_PROVIDER", "openai").strip()
+            or "openai",
+            image_summary_model=os.getenv("IMAGE_SUMMARY_MODEL", "gpt-4.1-mini").strip()
+            or "gpt-4.1-mini",
+            openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
+            openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
+            or "https://api.openai.com/v1",
         )

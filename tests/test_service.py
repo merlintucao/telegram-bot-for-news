@@ -10,11 +10,13 @@ from pathlib import Path
 from news_bot.cli import run_status
 from news_bot.config import AppConfig
 from news_bot.filtering import build_post_filter
+from news_bot.image_summary import ImageSummaryError
 from news_bot.models import MediaAttachment, SourcePost
 from news_bot.routing import build_router
 from news_bot.service import NewsBotService, format_post_caption, format_post_message
 from news_bot.source_types import SourceError
 from news_bot.storage import StateStore
+from news_bot.translate import TranslationError
 
 
 def make_config(db_path: Path) -> AppConfig:
@@ -41,6 +43,9 @@ def make_config(db_path: Path) -> AppConfig:
         exclude_reblogs=False,
         user_agent="test-agent",
         log_level="INFO",
+        translation_retry_attempts=3,
+        translation_retry_backoff_seconds=0,
+        translation_failure_placeholder="Ban dich tam thoi chua san sang.",
     )
 
 
@@ -141,6 +146,44 @@ class FakeTranslator:
     def translate(self, text: str) -> str:
         self.calls.append(text)
         return self.translated_text
+
+
+class FlakyTranslator:
+    def __init__(self, failures_before_success: int, translated_text: str) -> None:
+        self.failures_remaining = failures_before_success
+        self.translated_text = translated_text
+        self.calls: list[str] = []
+
+    def translate(self, text: str) -> str:
+        self.calls.append(text)
+        if self.failures_remaining > 0:
+            self.failures_remaining -= 1
+            raise TranslationError("temporary translate failure")
+        return self.translated_text
+
+
+class FailingTranslator:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def translate(self, text: str) -> str:
+        self.calls.append(text)
+        raise TranslationError("translate unavailable")
+
+
+class FakeImageSummarizer:
+    def __init__(self, summary: str) -> None:
+        self.summary = summary
+        self.calls: list[list[str]] = []
+
+    def summarize_images(self, image_urls: list[str]) -> str:
+        self.calls.append(list(image_urls))
+        return self.summary
+
+
+class FailingImageSummarizer:
+    def summarize_images(self, image_urls: list[str]) -> str:
+        raise ImageSummaryError("vision unavailable")
 
 
 class ServiceTests(unittest.TestCase):
@@ -275,8 +318,178 @@ class ServiceTests(unittest.TestCase):
 
         message = format_post_message(post)
 
-        self.assertIn("Media summary: Includes 1 image", message)
+        self.assertIn("The post includes 1 image.", message)
         self.assertNotIn("https://cdn.example.com/a.jpg", message)
+
+    def test_format_post_message_uses_attachment_descriptions_for_media_summary(self) -> None:
+        post = SourcePost(
+            source_id="truthsocial:realDonaldTrump",
+            source_name="Truth Social",
+            id="101",
+            account_handle="realDonaldTrump",
+            created_at="2026-04-07T08:00:00Z",
+            url="https://truthsocial.com/@realDonaldTrump/posts/101",
+            body_text="hello world",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(
+                MediaAttachment(
+                    kind="image",
+                    url="https://cdn.example.com/a.jpg",
+                    description="Portrait artwork with a U.S. flag over Trump's face",
+                ),
+            ),
+            raw_payload={"id": "101"},
+        )
+
+        message = format_post_message(post)
+
+        self.assertIn("Image summary: Portrait artwork with a U.S. flag over Trump's face", message)
+
+    def test_image_summary_is_added_from_image_summarizer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=config.enabled_sources,
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+                translation_retry_attempts=config.translation_retry_attempts,
+                translation_retry_backoff_seconds=0,
+                translation_failure_placeholder=config.translation_failure_placeholder,
+            )
+            store = StateStore(db_path)
+            post = SourcePost(
+                source_id="truthsocial:realDonaldTrump",
+                source_name="Truth Social",
+                id="101",
+                account_handle="realDonaldTrump",
+                created_at="2026-04-07T08:00:00Z",
+                url="https://truthsocial.com/@realDonaldTrump/posts/101",
+                body_text="hello world",
+                is_reply=False,
+                is_reblog=False,
+                media_attachments=(
+                    MediaAttachment(
+                        kind="image",
+                        url="https://cdn.example.com/a.jpg",
+                        preview_url="https://cdn.example.com/a-preview.jpg",
+                    ),
+                ),
+                raw_payload={"id": "101"},
+            )
+            client = FakeClient([[post]])
+            sender = FakeSender()
+            translator = FakeTranslator("xin chao the gioi")
+            image_summarizer = FakeImageSummarizer("Buc anh cho thay chan dung co quoc ky My.")
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                sleep_fn=lambda seconds: None,
+                translator=translator,
+                image_summarizer=image_summarizer,
+            )
+
+            summary = service.run_once()
+
+            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(
+                image_summarizer.calls,
+                [["https://cdn.example.com/a-preview.jpg"]],
+            )
+            self.assertIn("Hinh anh cho thay: Buc anh cho thay chan dung co quoc ky My.", sender.messages[0])
+            self.assertNotIn("The post includes 1 image.", sender.messages[0])
+
+    def test_video_does_not_use_image_summarizer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=config.enabled_sources,
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+                translation_retry_attempts=1,
+                translation_retry_backoff_seconds=0,
+                translation_failure_placeholder=config.translation_failure_placeholder,
+            )
+            store = StateStore(db_path)
+            post = SourcePost(
+                source_id="truthsocial:realDonaldTrump",
+                source_name="Truth Social",
+                id="101",
+                account_handle="realDonaldTrump",
+                created_at="2026-04-07T08:00:00Z",
+                url="https://truthsocial.com/@realDonaldTrump/posts/101",
+                body_text="hello world",
+                is_reply=False,
+                is_reblog=False,
+                media_attachments=(
+                    MediaAttachment(kind="video", url="https://cdn.example.com/a.mp4"),
+                ),
+                raw_payload={"id": "101"},
+            )
+            client = FakeClient([[post]])
+            sender = FakeSender()
+            image_summarizer = FakeImageSummarizer("Khong duoc dung")
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                sleep_fn=lambda seconds: None,
+                translator=FailingTranslator(),
+                image_summarizer=image_summarizer,
+            )
+
+            summary = service.run_once()
+
+            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(image_summarizer.calls, [])
+            self.assertIn("Bai dang co kem video hoac tep media.", sender.messages[0])
 
     def test_format_post_message_summarizes_link_context(self) -> None:
         post = make_post(
@@ -286,7 +499,7 @@ class ServiceTests(unittest.TestCase):
 
         message = format_post_message(post)
 
-        self.assertIn("Ông Donald Trump cho rằng two more major pharmaceutical companies to launch products through TrumpRx.", message)
+        self.assertIn("Ông Donald Trump cho rằng Two more major pharmaceutical companies to launch products through TrumpRx.", message)
         self.assertIn("Link summary: Two more major pharmaceutical companies to launch products through TrumpRx:", message)
 
     def test_format_post_message_keeps_multiple_sentences_for_long_story(self) -> None:
@@ -310,7 +523,7 @@ class ServiceTests(unittest.TestCase):
             ),
         )
 
-        self.assertIn("Ông Donald Trump cho rằng một ngày trọng đại cho hòa bình thế giới.", message)
+        self.assertIn("Ông Donald Trump cho rằng Một ngày trọng đại cho hòa bình thế giới.", message)
         self.assertIn("Iran muốn điều đó xảy ra, họ đã chịu đủ rồi!", message)
         self.assertIn("Hoa Kỳ sẽ hỗ trợ tình trạng ùn tắc giao thông tại eo biển Hormuz.", message)
         self.assertIn("Iran có thể bắt đầu quá trình tái thiết.", message)
@@ -343,6 +556,9 @@ class ServiceTests(unittest.TestCase):
                 exclude_reblogs=config.exclude_reblogs,
                 user_agent=config.user_agent,
                 log_level=config.log_level,
+                translation_retry_attempts=config.translation_retry_attempts,
+                translation_retry_backoff_seconds=config.translation_retry_backoff_seconds,
+                translation_failure_placeholder=config.translation_failure_placeholder,
             )
             store = StateStore(db_path)
             client = FakeClient([[make_post("102", "hello world")]])
@@ -365,6 +581,128 @@ class ServiceTests(unittest.TestCase):
             self.assertIn("🚨 BREAKING from Donald Trump", sender.messages[0])
             self.assertIn("Ông Donald Trump cho rằng xin chao the gioi.", sender.messages[0])
             self.assertNotIn("hello world", sender.messages[0])
+
+    def test_translation_retries_before_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=config.enabled_sources,
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+                translation_retry_attempts=3,
+                translation_retry_backoff_seconds=0,
+                translation_failure_placeholder=config.translation_failure_placeholder,
+            )
+            store = StateStore(db_path)
+            client = FakeClient([[make_post("102", "hello world")]])
+            sender = FakeSender()
+            translator = FlakyTranslator(2, "xin chao the gioi")
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                sleep_fn=lambda seconds: None,
+                translator=translator,
+            )
+
+            summary = service.run_once()
+
+            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(len(translator.calls), 3)
+            self.assertIn("xin chao the gioi", sender.messages[0])
+
+    def test_translation_failure_uses_vietnamese_placeholder_and_hides_english(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=config.enabled_sources,
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+                translation_retry_attempts=2,
+                translation_retry_backoff_seconds=0,
+                translation_failure_placeholder="Ban dich tam thoi chua san sang.",
+            )
+            store = StateStore(db_path)
+            post = SourcePost(
+                source_id="truthsocial:realDonaldTrump",
+                source_name="Truth Social",
+                id="101",
+                account_handle="realDonaldTrump",
+                created_at="2026-04-07T08:00:00Z",
+                url="https://truthsocial.com/@realDonaldTrump/posts/101",
+                body_text="hello world https://example.com/story",
+                is_reply=False,
+                is_reblog=False,
+                media_attachments=(
+                    MediaAttachment(kind="image", url="https://cdn.example.com/a.jpg"),
+                ),
+                raw_payload={"id": "101"},
+            )
+            client = FakeClient([[post]])
+            sender = FakeSender()
+            translator = FailingTranslator()
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                sleep_fn=lambda seconds: None,
+                translator=translator,
+            )
+
+            summary = service.run_once()
+
+            self.assertEqual(summary.sent_count, 1)
+            self.assertIn("Ban dich tam thoi chua san sang.", sender.messages[0])
+            self.assertIn("Bai dang co kem lien ket lien quan.", sender.messages[0])
+            self.assertIn("Bai dang co kem hinh anh lien quan.", sender.messages[0])
+            self.assertNotIn("hello world", sender.messages[0])
+            self.assertNotIn("The post includes 1 image.", sender.messages[0])
 
     def test_multiple_sources_are_processed_independently(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

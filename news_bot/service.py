@@ -10,7 +10,8 @@ from typing import Callable
 
 from .config import AppConfig
 from .filtering import PostFilter, build_post_filter
-from .models import SourcePost
+from .image_summary import ImageSummarizer, build_image_summarizer, ImageSummaryError
+from .models import MediaAttachment, SourcePost
 from .routing import SourceRouter, build_router
 from .sources import SourceAdapter, build_sources
 from .storage import SourceHealthRecord, StateStore
@@ -98,7 +99,6 @@ def _rewrite_trump_summary_vi(sentences: list[str], limit: int) -> str:
 
     lead = _drop_terminal_punctuation(sentences[0])
     if lead:
-        lead = _lowercase_first_char(lead)
         summary_parts = [f"Ông Donald Trump cho rằng {lead}."]
     else:
         summary_parts = []
@@ -201,35 +201,80 @@ def _summarize_links(post: SourcePost, limit: int = 120) -> list[str]:
 
 
 def _summarize_media(post: SourcePost, limit: int = 120) -> list[str]:
-    if not post.media_attachments:
+    return _summarize_media_attachments(post.media_attachments, limit=limit)
+
+
+def _summarize_media_attachments(
+    attachments: tuple[MediaAttachment, ...],
+    limit: int = 120,
+) -> list[str]:
+    if not attachments:
         return []
     described = [
-        attachment.description.strip()
-        for attachment in post.media_attachments
+        (
+            attachment.kind.strip().lower() or "media",
+            attachment.description.strip(),
+        )
+        for attachment in attachments
         if attachment.description and attachment.description.strip()
     ]
     if described:
-        return [f"Media summary: {_truncate_sentence(description, limit)}" for description in described[:3]]
+        lines: list[str] = []
+        for kind, description in described[:3]:
+            label = _media_label(kind)
+            lines.append(f"{label}: {_truncate_sentence(description, limit)}")
+        return lines
 
     counts: dict[str, int] = {}
-    for attachment in post.media_attachments:
-        kind = attachment.kind.strip().lower() or "media"
-        if kind in {"photo", "image"}:
-            label = "image"
-        elif kind in {"video", "gif", "gifv"}:
-            label = "video"
-        else:
-            label = kind
+    for attachment in attachments:
+        label = _media_count_label(attachment.kind)
         counts[label] = counts.get(label, 0) + 1
 
     parts = []
     for label, count in counts.items():
         suffix = "" if count == 1 else "s"
         parts.append(f"{count} {label}{suffix}")
-    return [f"Media summary: Includes {' and '.join(parts)}"]
+    if len(parts) == 1:
+        return [f"The post includes {parts[0]}."]
+    if len(parts) == 2:
+        return [f"The post includes {parts[0]} and {parts[1]}."]
+    return [f"The post includes {', '.join(parts[:-1])}, and {parts[-1]}."]
 
 
-def _build_summary_lines(post: SourcePost, translated_text: str | None) -> list[str]:
+def _media_count_label(kind: str) -> str:
+    normalized = kind.strip().lower() or "media"
+    if normalized in {"photo", "image"}:
+        return "image"
+    if normalized in {"video", "gif", "gifv"}:
+        return "video"
+    return normalized
+
+
+def _media_label(kind: str) -> str:
+    normalized = _media_count_label(kind)
+    if normalized == "image":
+        return "Image summary"
+    if normalized == "video":
+        return "Video summary"
+    return "Media summary"
+
+
+def _is_image_attachment(attachment: MediaAttachment) -> bool:
+    return _media_count_label(attachment.kind) == "image"
+
+
+def _build_auxiliary_summary_lines(post: SourcePost) -> list[str]:
+    lines: list[str] = []
+    lines.extend(_summarize_links(post))
+    lines.extend(_summarize_media(post))
+    return lines
+
+
+def _build_summary_lines(
+    post: SourcePost,
+    translated_text: str | None,
+    translated_auxiliary_lines: list[str] | None = None,
+) -> list[str]:
     summary_lines: list[str] = []
     caption_summary = _summarize_caption(
         translated_text or _post_caption_text(post),
@@ -238,24 +283,39 @@ def _build_summary_lines(post: SourcePost, translated_text: str | None) -> list[
     )
     if caption_summary:
         summary_lines.append(caption_summary)
-    summary_lines.extend(_summarize_links(post))
-    summary_lines.extend(_summarize_media(post))
+    summary_lines.extend(
+        _build_auxiliary_summary_lines(post)
+        if translated_auxiliary_lines is None
+        else translated_auxiliary_lines
+    )
     return summary_lines
 
 
-def format_post_message(post: SourcePost, translated_text: str | None = None) -> str:
+def format_post_message(
+    post: SourcePost,
+    translated_text: str | None = None,
+    translated_auxiliary_lines: list[str] | None = None,
+) -> str:
     lines = [_format_header(post)]
 
     if post.created_at:
         lines.extend(["", f"Posted: {_format_posted_at(post.created_at)}"])
-    summary_lines = _build_summary_lines(post, translated_text)
+    summary_lines = _build_summary_lines(
+        post,
+        translated_text,
+        translated_auxiliary_lines=translated_auxiliary_lines,
+    )
     if summary_lines:
         lines.extend(["", *summary_lines])
 
     return trim_message("\n".join(lines))
 
 
-def format_post_caption(post: SourcePost, translated_text: str | None = None) -> str:
+def format_post_caption(
+    post: SourcePost,
+    translated_text: str | None = None,
+    translated_auxiliary_lines: list[str] | None = None,
+) -> str:
     lines = [_format_header(post)]
 
     info_lines: list[str] = []
@@ -263,7 +323,11 @@ def format_post_caption(post: SourcePost, translated_text: str | None = None) ->
         info_lines.append(f"Posted: {_format_posted_at(post.created_at)}")
     if info_lines:
         lines.extend(["", *info_lines])
-    summary_lines = _build_summary_lines(post, translated_text)
+    summary_lines = _build_summary_lines(
+        post,
+        translated_text,
+        translated_auxiliary_lines=translated_auxiliary_lines,
+    )
     if summary_lines:
         lines.extend(["", *summary_lines])
     return trim_message("\n".join(lines), limit=1024)
@@ -319,6 +383,13 @@ class RunSummary:
     failed_sources: int = 0
 
 
+@dataclass(slots=True)
+class AuxiliarySummaryEntry:
+    text: str
+    already_vietnamese: bool = False
+    placeholder: str | None = None
+
+
 class NewsBotService:
     def __init__(
         self,
@@ -330,6 +401,7 @@ class NewsBotService:
         sender: TelegramSender | _NoopSender,
         sleep_fn: Callable[[float], None] = time.sleep,
         translator: Translator | None = None,
+        image_summarizer: ImageSummarizer | None = None,
     ) -> None:
         self.config = config
         self.store = store
@@ -339,6 +411,7 @@ class NewsBotService:
         self.sender = sender
         self.sleep_fn = sleep_fn
         self.translator = translator
+        self.image_summarizer = image_summarizer
 
     @classmethod
     def from_config(cls, config: AppConfig, dry_run: bool = False) -> "NewsBotService":
@@ -366,6 +439,14 @@ class NewsBotService:
             ),
             sender=sender,
             translator=_build_translator(config),
+            image_summarizer=build_image_summarizer(
+                enabled=config.image_summary_enabled,
+                provider=config.image_summary_provider,
+                api_key=config.openai_api_key,
+                model=config.image_summary_model,
+                base_url=config.openai_base_url,
+                timeout_seconds=config.request_timeout_seconds,
+            ),
         )
 
     def run_once(self, dry_run: bool = False) -> RunSummary:
@@ -678,8 +759,17 @@ class NewsBotService:
                 continue
 
             translated_text = self._translate_post(post)
-            message = format_post_message(post, translated_text=translated_text)
-            media_caption = format_post_caption(post, translated_text=translated_text)
+            translated_auxiliary_lines = self._translate_auxiliary_summary_lines(post)
+            message = format_post_message(
+                post,
+                translated_text=translated_text,
+                translated_auxiliary_lines=translated_auxiliary_lines,
+            )
+            media_caption = format_post_caption(
+                post,
+                translated_text=translated_text,
+                translated_auxiliary_lines=translated_auxiliary_lines,
+            )
             if dry_run:
                 LOGGER.info("Dry run message for %s:\n%s", post.id, message)
                 continue
@@ -724,15 +814,148 @@ class NewsBotService:
         original_caption = _post_caption_text(post)
         if not original_caption:
             return None
-        try:
-            translated_text = self.translator.translate(original_caption)
-        except TranslationError as exc:
-            LOGGER.warning("Translation failed for %s: %s", post.id, exc)
+        translated_text = self._translate_text_with_retries(
+            original_caption,
+            context=f"post {post.id}",
+        )
+        if translated_text is None:
+            return self.config.translation_failure_placeholder.strip() or None
+        return translated_text
+
+    def _translate_auxiliary_summary_lines(self, post: SourcePost) -> list[str]:
+        entries = self._build_auxiliary_summary_entries(post)
+        if not entries:
+            return []
+        if self.translator is None:
+            return [entry.text.strip() for entry in entries if entry.text.strip()]
+
+        translated_lines: list[str] = []
+        seen: set[str] = set()
+        for entry in entries:
+            if entry.already_vietnamese:
+                translated = entry.text
+            else:
+                translated = self._translate_text_with_retries(
+                    entry.text,
+                    context=f"summary line for post {post.id}",
+                )
+            if translated is None:
+                translated = entry.placeholder or self._auxiliary_placeholder_for_line(entry.text)
+            normalized = translated.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            translated_lines.append(normalized)
+        return translated_lines
+
+    def _translate_text_with_retries(self, text: str, *, context: str) -> str | None:
+        if self.translator is None:
             return None
-        normalized = translated_text.strip()
+
+        attempts = max(1, self.config.translation_retry_attempts)
+        backoff_seconds = max(0, self.config.translation_retry_backoff_seconds)
+        last_error: TranslationError | None = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                translated_text = self.translator.translate(text)
+            except TranslationError as exc:
+                last_error = exc
+                if attempt < attempts:
+                    LOGGER.warning(
+                        "Translation attempt %s/%s failed for %s: %s",
+                        attempt,
+                        attempts,
+                        context,
+                        exc,
+                    )
+                    if backoff_seconds > 0:
+                        self.sleep_fn(float(backoff_seconds * (2 ** (attempt - 1))))
+                    continue
+                break
+
+            normalized = translated_text.strip()
+            if normalized:
+                return normalized
+
+        if last_error is not None:
+            LOGGER.warning("Translation failed for %s after retries: %s", context, last_error)
+        return None
+
+    def _build_auxiliary_summary_entries(self, post: SourcePost) -> list[AuxiliarySummaryEntry]:
+        entries: list[AuxiliarySummaryEntry] = []
+        entries.extend(
+            AuxiliarySummaryEntry(
+                text=line,
+                placeholder="Bai dang co kem lien ket lien quan.",
+            )
+            for line in _summarize_links(post)
+        )
+
+        image_summary = self._summarize_post_images(post)
+        if image_summary:
+            entries.append(
+                AuxiliarySummaryEntry(
+                    text=image_summary,
+                    already_vietnamese=True,
+                )
+            )
+        else:
+            image_attachments = tuple(
+                attachment for attachment in post.media_attachments if _is_image_attachment(attachment)
+            )
+            entries.extend(
+                AuxiliarySummaryEntry(
+                    text=line,
+                    placeholder="Bai dang co kem hinh anh lien quan.",
+                )
+                for line in _summarize_media_attachments(image_attachments)
+            )
+
+        non_image_attachments = tuple(
+            attachment for attachment in post.media_attachments if not _is_image_attachment(attachment)
+        )
+        entries.extend(
+            AuxiliarySummaryEntry(
+                text=line,
+                placeholder="Bai dang co kem video hoac tep media.",
+            )
+            for line in _summarize_media_attachments(non_image_attachments)
+        )
+        return entries
+
+    def _summarize_post_images(self, post: SourcePost) -> str | None:
+        if self.image_summarizer is None:
+            return None
+
+        image_urls = [
+            (attachment.preview_url or attachment.url).strip()
+            for attachment in post.media_attachments
+            if _is_image_attachment(attachment) and (attachment.preview_url or attachment.url).strip()
+        ]
+        if not image_urls:
+            return None
+
+        try:
+            summary = self.image_summarizer.summarize_images(image_urls[:3])
+        except ImageSummaryError as exc:
+            LOGGER.warning("Image summary failed for post %s: %s", post.id, exc)
+            return None
+
+        normalized = summary.strip()
         if not normalized:
             return None
-        return normalized
+        if normalized.lower().startswith("hinh anh"):
+            return normalized
+        return f"Hinh anh cho thay: {normalized}"
+
+    def _auxiliary_placeholder_for_line(self, line: str) -> str:
+        lowered = line.lower()
+        if "link" in lowered:
+            return "Bai dang co kem lien ket lien quan."
+        if "image" in lowered or "video" in lowered or "media" in lowered:
+            return "Bai dang co kem hinh anh hoac video."
+        return "Thong tin bo sung tam thoi chua san sang."
 
 
 class _NoopSender:
