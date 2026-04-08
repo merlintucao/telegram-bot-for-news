@@ -36,19 +36,18 @@ class RecordingSender(TelegramSender):
 
 
 class TelegramSenderTests(unittest.TestCase):
-    def test_send_post_uses_photo_and_text_for_single_image(self) -> None:
+    def test_send_post_uses_single_photo_message_for_single_image(self) -> None:
         sender = RecordingSender()
         post = make_post(MediaAttachment(kind="image", url="https://cdn.example.com/a.jpg"))
 
         sender.send_post(post, "body", chat_id="@photos", media_caption="caption text")
 
         self.assertEqual(sender.calls[0][0], "sendPhoto")
-        self.assertEqual(sender.calls[1][0], "sendMessage")
         self.assertEqual(sender.calls[0][1]["chat_id"], "@photos")
-        self.assertEqual(sender.calls[1][1]["chat_id"], "@photos")
         self.assertEqual(sender.calls[0][1]["caption"], "caption text")
+        self.assertEqual(len(sender.calls), 1)
 
-    def test_send_post_uses_media_group_for_multiple_visual_attachments(self) -> None:
+    def test_send_post_uses_single_media_group_for_multiple_visual_attachments(self) -> None:
         sender = RecordingSender()
         post = make_post(
             MediaAttachment(kind="image", url="https://cdn.example.com/a.jpg"),
@@ -58,9 +57,9 @@ class TelegramSenderTests(unittest.TestCase):
         sender.send_post(post, "body", media_caption="caption text")
 
         self.assertEqual(sender.calls[0][0], "sendMediaGroup")
-        self.assertEqual(sender.calls[1][0], "sendMessage")
         media = sender.calls[0][1]["media"]
         self.assertEqual(media[0]["caption"], "caption text")
+        self.assertEqual(len(sender.calls), 1)
 
     def test_send_post_falls_back_to_text_if_media_send_fails(self) -> None:
         sender = RecordingSender(fail_methods={"sendPhoto"})

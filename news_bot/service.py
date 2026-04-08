@@ -5,6 +5,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
+from urllib.parse import urlparse
 from typing import Callable
 
 from .config import AppConfig
@@ -19,6 +20,7 @@ from .translate import GoogleTranslateTranslator, TranslationError, Translator
 LOGGER = logging.getLogger(__name__)
 
 HANDLE_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+URL_PATTERN = re.compile(r"https?://\S+")
 VIETNAM_TZ = timezone(timedelta(hours=7))
 
 
@@ -66,7 +68,179 @@ def _format_posted_at(created_at: str) -> str:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     localized = parsed.astimezone(VIETNAM_TZ)
-    return localized.strftime("%d/%m/%Y %H:%M")
+    return localized.strftime("%H:%M %d/%m/%Y")
+
+
+def _normalize_spaces(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _truncate_sentence(text: str, limit: int) -> str:
+    cleaned = _normalize_spaces(text)
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3].rstrip(" ,;:-") + "..."
+
+
+def _drop_terminal_punctuation(text: str) -> str:
+    return text.rstrip(" .!?:;")
+
+
+def _lowercase_first_char(text: str) -> str:
+    if not text:
+        return text
+    return text[0].lower() + text[1:]
+
+
+def _rewrite_trump_summary_vi(sentences: list[str], limit: int) -> str:
+    if not sentences:
+        return ""
+
+    lead = _drop_terminal_punctuation(sentences[0])
+    if lead:
+        lead = _lowercase_first_char(lead)
+        summary_parts = [f"Ông Donald Trump cho rằng {lead}."]
+    else:
+        summary_parts = []
+
+    for sentence in sentences[1:]:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        projected = " ".join(summary_parts + [sentence]).strip()
+        if len(projected) > limit and len(summary_parts) >= 2:
+            break
+        if len(projected) > limit:
+            summary_parts.append(_truncate_sentence(sentence, max(20, limit - len(" ".join(summary_parts)))))
+            break
+        summary_parts.append(sentence)
+
+    return _truncate_sentence(" ".join(summary_parts), limit)
+
+
+def _summarize_caption(text: str, limit: int = 260, source_id: str = "") -> str:
+    cleaned = _normalize_spaces(URL_PATTERN.sub("", text))
+    if not cleaned:
+        return ""
+    sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+    compact_sentences: list[str] = []
+    current_length = 0
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        separator = 1 if compact_sentences else 0
+        projected = current_length + separator + len(sentence)
+        if projected > limit and len(compact_sentences) >= 2:
+            break
+        if projected > limit:
+            compact_sentences.append(_truncate_sentence(sentence, limit))
+            break
+        compact_sentences.append(sentence)
+        current_length = projected
+    if not compact_sentences:
+        return _truncate_sentence(cleaned, limit)
+    if source_id == "truthsocial:realDonaldTrump":
+        return _rewrite_trump_summary_vi(compact_sentences, limit)
+    return " ".join(compact_sentences)
+
+
+def _sentence_without_urls(text: str) -> str:
+    return _normalize_spaces(URL_PATTERN.sub("", text))
+
+
+def _summarize_links(post: SourcePost, limit: int = 120) -> list[str]:
+    lines: list[str] = []
+    card = post.raw_payload.get("card")
+    if isinstance(card, dict):
+        title = _normalize_spaces(str(card.get("title") or ""))
+        description = _normalize_spaces(str(card.get("description") or ""))
+        if title:
+            detail = title
+            if description and description.casefold() != title.casefold():
+                detail = f"{title} - {_truncate_sentence(description, max(20, limit - len(title) - 3))}"
+            lines.append(f"Link summary: {_truncate_sentence(detail, limit)}")
+
+    body_urls = []
+    seen_urls: set[str] = set()
+    for match in URL_PATTERN.finditer(post.body_text):
+        url = match.group(0).rstrip(").,!?")
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        body_urls.append(url)
+
+    if not body_urls:
+        return lines
+
+    sentence_candidates = re.split(r"(?<=[.!?])\s+", post.body_text)
+    for url in body_urls[:3]:
+        described = False
+        for sentence in sentence_candidates:
+            if url not in sentence:
+                continue
+            sentence_summary = _sentence_without_urls(sentence)
+            if sentence_summary:
+                lines.append(f"Link summary: {_truncate_sentence(sentence_summary, limit)}")
+                described = True
+                break
+        if described:
+            continue
+        domain = urlparse(url).netloc.replace("www.", "")
+        if domain:
+            lines.append(f"Link summary: Link to {domain}")
+
+    deduped: list[str] = []
+    seen_lines: set[str] = set()
+    for line in lines:
+        if line in seen_lines:
+            continue
+        seen_lines.add(line)
+        deduped.append(line)
+    return deduped[:3]
+
+
+def _summarize_media(post: SourcePost, limit: int = 120) -> list[str]:
+    if not post.media_attachments:
+        return []
+    described = [
+        attachment.description.strip()
+        for attachment in post.media_attachments
+        if attachment.description and attachment.description.strip()
+    ]
+    if described:
+        return [f"Media summary: {_truncate_sentence(description, limit)}" for description in described[:3]]
+
+    counts: dict[str, int] = {}
+    for attachment in post.media_attachments:
+        kind = attachment.kind.strip().lower() or "media"
+        if kind in {"photo", "image"}:
+            label = "image"
+        elif kind in {"video", "gif", "gifv"}:
+            label = "video"
+        else:
+            label = kind
+        counts[label] = counts.get(label, 0) + 1
+
+    parts = []
+    for label, count in counts.items():
+        suffix = "" if count == 1 else "s"
+        parts.append(f"{count} {label}{suffix}")
+    return [f"Media summary: Includes {' and '.join(parts)}"]
+
+
+def _build_summary_lines(post: SourcePost, translated_text: str | None) -> list[str]:
+    summary_lines: list[str] = []
+    caption_summary = _summarize_caption(
+        translated_text or _post_caption_text(post),
+        limit=700,
+        source_id=post.source_id,
+    )
+    if caption_summary:
+        summary_lines.append(caption_summary)
+    summary_lines.extend(_summarize_links(post))
+    summary_lines.extend(_summarize_media(post))
+    return summary_lines
 
 
 def format_post_message(post: SourcePost, translated_text: str | None = None) -> str:
@@ -74,17 +248,9 @@ def format_post_message(post: SourcePost, translated_text: str | None = None) ->
 
     if post.created_at:
         lines.extend(["", f"Posted: {_format_posted_at(post.created_at)}"])
-
-    if post.url:
-        lines.append(f"Link: {post.url}")
-
-    snippet = translated_text or _post_caption_text(post)
-    if snippet:
-        lines.extend(["", snippet])
-
-    if post.media_urls:
-        lines.extend(["", "Media:"])
-        lines.extend(post.media_urls[:3])
+    summary_lines = _build_summary_lines(post, translated_text)
+    if summary_lines:
+        lines.extend(["", *summary_lines])
 
     return trim_message("\n".join(lines))
 
@@ -95,14 +261,11 @@ def format_post_caption(post: SourcePost, translated_text: str | None = None) ->
     info_lines: list[str] = []
     if post.created_at:
         info_lines.append(f"Posted: {_format_posted_at(post.created_at)}")
-    if post.url:
-        info_lines.append(f"Link: {post.url}")
     if info_lines:
         lines.extend(["", *info_lines])
-
-    snippet = translated_text or _post_caption_text(post)
-    if snippet:
-        lines.extend(["", snippet])
+    summary_lines = _build_summary_lines(post, translated_text)
+    if summary_lines:
+        lines.extend(["", *summary_lines])
     return trim_message("\n".join(lines), limit=1024)
 
 

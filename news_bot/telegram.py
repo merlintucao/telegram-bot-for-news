@@ -78,6 +78,7 @@ class TelegramSender:
                     chat_id=resolved_chat_id,
                     caption=media_caption or "",
                 )
+                return
             except TelegramError as exc:
                 LOGGER.warning(
                     "Telegram media delivery failed for post %s; falling back to text only: %s",

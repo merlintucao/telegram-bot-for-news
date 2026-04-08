@@ -218,15 +218,15 @@ class ServiceTests(unittest.TestCase):
             self.assertIsNone(store.get_last_status_id(client.source_id))
             self.assertEqual(sender.messages, [])
 
-    def test_format_post_message_contains_original_link(self) -> None:
+    def test_format_post_message_uses_summary_without_original_link(self) -> None:
         message = format_post_message(make_post("101", "hello world"))
         self.assertTrue(message.startswith("🚨 BREAKING from Donald Trump"))
         self.assertIn(
-            "🚨 BREAKING from Donald Trump\n\nPosted: 07/04/2026 15:00\nLink: https://truthsocial.com/@realDonaldTrump/posts/101",
+            "🚨 BREAKING from Donald Trump\n\nPosted: 15:00 07/04/2026",
             message,
         )
         self.assertIn("hello world", message)
-        self.assertIn("Link: https://truthsocial.com/@realDonaldTrump/posts/101", message)
+        self.assertNotIn("Link:", message)
 
     def test_format_post_message_includes_vietnamese_translation(self) -> None:
         message = format_post_message(
@@ -235,27 +235,28 @@ class ServiceTests(unittest.TestCase):
         )
 
         self.assertIn("🚨 BREAKING from Donald Trump", message)
-        self.assertIn("xin chao the gioi", message)
+        self.assertIn("Ông Donald Trump cho rằng xin chao the gioi.", message)
         self.assertNotIn("hello world", message)
+        self.assertNotIn("Link:", message)
         self.assertNotIn("Vietnamese caption:", message)
         self.assertNotIn("Original caption:", message)
 
-    def test_format_post_caption_is_compact_and_includes_original_link(self) -> None:
+    def test_format_post_caption_is_compact_and_summary_only(self) -> None:
         caption = format_post_caption(
             make_post("101", "hello world"),
             translated_text="xin chao the gioi",
         )
 
-        self.assertIn("Posted: 07/04/2026 15:00", caption)
-        self.assertIn("xin chao the gioi", caption)
-        self.assertIn("Link: https://truthsocial.com/@realDonaldTrump/posts/101", caption)
+        self.assertIn("Posted: 15:00 07/04/2026", caption)
+        self.assertIn("Ông Donald Trump cho rằng xin chao the gioi.", caption)
+        self.assertNotIn("Link:", caption)
 
     def test_format_post_message_uses_vietnam_time(self) -> None:
         message = format_post_message(make_post("101", "hello world"))
 
-        self.assertIn("Posted: 07/04/2026 15:00", message)
+        self.assertIn("Posted: 15:00 07/04/2026", message)
 
-    def test_format_post_message_lists_media_urls(self) -> None:
+    def test_format_post_message_summarizes_media_without_listing_urls(self) -> None:
         post = SourcePost(
             source_id="truthsocial:realDonaldTrump",
             source_name="Truth Social",
@@ -274,8 +275,46 @@ class ServiceTests(unittest.TestCase):
 
         message = format_post_message(post)
 
-        self.assertIn("Media:", message)
-        self.assertIn("https://cdn.example.com/a.jpg", message)
+        self.assertIn("Media summary: Includes 1 image", message)
+        self.assertNotIn("https://cdn.example.com/a.jpg", message)
+
+    def test_format_post_message_summarizes_link_context(self) -> None:
+        post = make_post(
+            "101",
+            "Two more major pharmaceutical companies to launch products through TrumpRx: https://justthenews.com/story",
+        )
+
+        message = format_post_message(post)
+
+        self.assertIn("Ông Donald Trump cho rằng two more major pharmaceutical companies to launch products through TrumpRx.", message)
+        self.assertIn("Link summary: Two more major pharmaceutical companies to launch products through TrumpRx:", message)
+
+    def test_format_post_message_keeps_multiple_sentences_for_long_story(self) -> None:
+        post = make_post(
+            "101",
+            (
+                "A big day for World Peace! Iran wants it to happen, they've had enough! "
+                "The United States of America will be helping with the traffic buildup in the Strait of Hormuz. "
+                "Iran can start the reconstruction process. "
+                "This could be the Golden Age of the Middle East!"
+            ),
+        )
+
+        message = format_post_message(
+            post,
+            translated_text=(
+                "Một ngày trọng đại cho hòa bình thế giới! Iran muốn điều đó xảy ra, họ đã chịu đủ rồi! "
+                "Hoa Kỳ sẽ hỗ trợ tình trạng ùn tắc giao thông tại eo biển Hormuz. "
+                "Iran có thể bắt đầu quá trình tái thiết. "
+                "Đây có thể là thời kỳ hoàng kim của Trung Đông!"
+            ),
+        )
+
+        self.assertIn("Ông Donald Trump cho rằng một ngày trọng đại cho hòa bình thế giới.", message)
+        self.assertIn("Iran muốn điều đó xảy ra, họ đã chịu đủ rồi!", message)
+        self.assertIn("Hoa Kỳ sẽ hỗ trợ tình trạng ùn tắc giao thông tại eo biển Hormuz.", message)
+        self.assertIn("Iran có thể bắt đầu quá trình tái thiết.", message)
+        self.assertIn("Đây có thể là thời kỳ hoàng kim của Trung Đông!", message)
 
     def test_translation_is_applied_before_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -324,7 +363,7 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(summary.sent_count, 1)
             self.assertEqual(translator.calls, ["hello world"])
             self.assertIn("🚨 BREAKING from Donald Trump", sender.messages[0])
-            self.assertIn("xin chao the gioi", sender.messages[0])
+            self.assertIn("Ông Donald Trump cho rằng xin chao the gioi.", sender.messages[0])
             self.assertNotIn("hello world", sender.messages[0])
 
     def test_multiple_sources_are_processed_independently(self) -> None:
