@@ -573,9 +573,36 @@ class ServiceTests(unittest.TestCase):
             ),
         )
 
-        self.assertIn("Ông Donald Trump cho biết lực lượng và khí tài Mỹ sẽ tiếp tục hiện diện quanh Iran cho đến khi thỏa thuận thực sự đạt được được tuân thủ đầy đủ.", message)
+        self.assertIn("Ông Donald Trump cho biết lực lượng và khí tài Mỹ sẽ tiếp tục hiện diện quanh Iran cho đến khi thỏa thuận được tuân thủ đầy đủ.", message)
         self.assertIn("Ông cảnh báo Nếu vì bất kỳ lý do nào điều đó không xảy ra, thì tiếng súng sẽ bắt đầu trở lại với quy mô lớn hơn và mạnh hơn trước.", message)
         self.assertIn("Ông nhấn mạnh không có vũ khí hạt nhân; eo biển Hormuz phải luôn mở và an toàn.", message)
+
+    def test_format_post_message_rewrites_machine_translated_military_post_into_natural_vietnamese(self) -> None:
+        post = make_post(
+            "101",
+            (
+                "All U.S. Ships, Aircraft, and Military Personnel, with additional Ammunition, Weaponry, and anything else that is appropriate and necessary for the lethal prosecution and destruction of an already substantially degraded Enemy, will remain in place in, and around, Iran, until such time as the REAL AGREEMENT reached is fully complied with. "
+                "If for any reason it is not, which is highly unlikely, then the “Shootin’ Starts,” bigger, and better, and stronger than anyone has ever seen before. "
+                "It was agreed, a long time ago, and despite all of the fake rhetoric to the contrary - NO NUCLEAR WEAPONS and, the Strait of Hormuz WILL BE OPEN & SAFE. "
+                "In the meantime our great Military is Loading Up and Resting, looking forward, actually, to its next Conquest. AMERICA IS BACK!"
+            ),
+        )
+
+        message = format_post_message(
+            post,
+            translated_text=(
+                "Tất cả các Tàu, Máy bay và Nhân viên Quân sự của Hoa Kỳ, cùng với Đạn dược, Vũ khí bổ sung và bất kỳ thứ gì khác phù hợp và cần thiết cho việc truy tố và tiêu diệt Kẻ thù vốn đã suy thoái đáng kể, sẽ vẫn tồn tại trong và xung quanh Iran, cho đến khi THỎA THUẬN THỰC SỰ đạt được được tuân thủ đầy đủ. "
+                "Nếu vì bất kỳ lý do gì mà điều đó không xảy ra, điều này rất khó xảy ra, thì “Shootin' Starts”, lớn hơn, tốt hơn và mạnh mẽ hơn bất kỳ ai từng thấy trước đây. "
+                "Nó đã được đồng ý từ lâu, và bất chấp tất cả những lời hoa mỹ giả tạo ngược lại - KHÔNG CÓ VŨ KHÍ HẠT NHÂN và eo biển Hormuz SẼ MỞ & AN TOÀN. "
+                "Trong khi chờ đợi, Quân đội vĩ đại của chúng ta đang chuẩn bị và nghỉ ngơi, thực sự đang mong chờ Cuộc chinh phục tiếp theo. MỸ ĐÃ TRỞ LẠI!"
+            ),
+        )
+
+        self.assertIn("Ông Donald Trump cho biết lực lượng và khí tài Mỹ sẽ tiếp tục hiện diện quanh Iran cho đến khi thỏa thuận được tuân thủ đầy đủ.", message)
+        self.assertIn("Ông cảnh báo nếu thỏa thuận không được tuân thủ, giao tranh sẽ bùng phát trở lại ở quy mô lớn hơn.", message)
+        self.assertIn("Ông nhấn mạnh không có vũ khí hạt nhân; eo biển Hormuz phải luôn mở và an toàn.", message)
+        self.assertNotIn("Tất cả các Tàu, Máy bay", message)
+        self.assertNotIn("MỸ ĐÃ TRỞ LẠI", message)
 
     def test_format_post_message_keeps_earlier_threat_when_main_claim_comes_later(self) -> None:
         post = make_post(

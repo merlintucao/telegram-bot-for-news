@@ -142,15 +142,37 @@ def _rewrite_fact_clause_vi(text: str, limit: int) -> str:
         (r"^\s*Chúng tôi đang", "Mỹ đang"),
         (r"^\s*Chúng tôi", "Mỹ"),
         (
+            r"Tất cả các Tàu, Máy bay và Nhân viên Quân sự của Hoa Kỳ, cùng với Đạn dược, Vũ khí bổ sung(?: và bất kỳ thứ gì khác phù hợp và cần thiết(?: cho việc truy tố và tiêu diệt Kẻ thù vốn đã suy thoái đáng kể)?)?",
+            "lực lượng và khí tài Mỹ",
+        ),
+        (
             r"Tất cả tàu, máy bay và quân nhân Mỹ, cùng với thêm đạn dược, vũ khí(?: và mọi thứ cần thiết(?: cho việc tiêu diệt một kẻ thù vốn đã bị suy yếu đáng kể)?)?",
             "lực lượng và khí tài Mỹ",
         ),
         (r"lực lượng và khí tài Mỹ,\s*sẽ", "lực lượng và khí tài Mỹ sẽ"),
+        (r"sẽ vẫn tồn tại trong và xung quanh Iran", "sẽ tiếp tục hiện diện quanh Iran"),
         (r"sẽ tiếp tục ở trong và xung quanh Iran", "sẽ tiếp tục hiện diện quanh Iran"),
         (r"ở trong và xung quanh Iran", "quanh Iran"),
+        (r"quanh Iran,\s*cho đến khi", "quanh Iran cho đến khi"),
+        (
+            r"THỎA THUẬN THỰC SỰ đạt được được tuân thủ đầy đủ",
+            "thỏa thuận được tuân thủ đầy đủ",
+        ),
+        (
+            r"thỏa thuận thực sự đạt được được tuân thủ đầy đủ",
+            "thỏa thuận được tuân thủ đầy đủ",
+        ),
+        (
+            r"Nếu vì bất kỳ lý do gì mà điều đó không xảy ra(?:, điều này rất khó xảy ra)?, thì [“\"]?Shootin' Starts[”\"]?, lớn hơn, tốt hơn và mạnh mẽ hơn bất kỳ ai từng thấy trước đây",
+            "nếu thỏa thuận không được tuân thủ, giao tranh sẽ bùng phát trở lại ở quy mô lớn hơn",
+        ),
         (
             r"Nếu vì bất kỳ lý do nào điều đó không xảy ra(?:, dù rất khó xảy ra)?, thì tiếng súng sẽ bắt đầu trở lại,? lớn hơn,? tốt hơn và mạnh hơn bất kỳ điều gì từng thấy trước đây",
             "nếu thỏa thuận không được tuân thủ, giao tranh sẽ bùng phát trở lại ở quy mô lớn hơn",
+        ),
+        (
+            r"Nó đã được đồng ý từ lâu, và bất chấp tất cả những lời hoa mỹ giả tạo ngược lại - KHÔNG CÓ VŨ KHÍ HẠT NHÂN và eo biển Hormuz SẼ MỞ & AN TOÀN",
+            "không có vũ khí hạt nhân; eo biển Hormuz phải luôn mở và an toàn",
         ),
         (
             r"Điều này đã được thống nhất từ lâu,? bất chấp mọi luận điệu giả tạo trái ngược - không có vũ khí hạt nhân và eo biển Hormuz sẽ mở và an toàn",
@@ -160,6 +182,7 @@ def _rewrite_fact_clause_vi(text: str, limit: int) -> str:
             r"Điều này đã được thống nhất từ lâu - không có vũ khí hạt nhân và eo biển Hormuz sẽ mở và an toàn",
             "không có vũ khí hạt nhân; eo biển Hormuz phải luôn mở và an toàn",
         ),
+        (r"\bMỸ ĐÃ TRỞ LẠI\b", ""),
     )
     for pattern, replacement in replacements:
         cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
