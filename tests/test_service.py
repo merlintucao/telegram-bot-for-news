@@ -524,8 +524,92 @@ class ServiceTests(unittest.TestCase):
         )
 
         self.assertIn("Ông Donald Trump cho biết Một ngày trọng đại cho hòa bình thế giới.", message)
-        self.assertIn("Ông cũng nói Iran muốn điều đó xảy ra, họ đã chịu đủ rồi; Hoa Kỳ sẽ hỗ trợ tình trạng ùn tắc giao thông tại eo biển Hormuz.", message)
+        self.assertIn("Ông cũng nói Iran muốn điều đó xảy ra, họ đã chịu đủ rồi.", message)
+        self.assertIn("Ông nhấn mạnh Hoa Kỳ sẽ hỗ trợ tình trạng ùn tắc giao thông tại eo biển Hormuz.", message)
         self.assertNotIn("Iran có thể bắt đầu quá trình tái thiết.", message)
+
+    def test_format_post_message_keeps_warning_and_context_for_major_claim(self) -> None:
+        post = make_post(
+            "101",
+            "A whole civilization will die tonight, never to be brought back again. I don't want that to happen, but it probably will. "
+            "However, now that we have Complete and Total Regime Change, where different, smarter, and less radicalized minds prevail, "
+            "maybe something revolutionarily wonderful can happen.",
+        )
+
+        message = format_post_message(
+            post,
+            translated_text=(
+                "Cả một nền văn minh sẽ chết tối nay, không bao giờ có thể quay trở lại được nữa. "
+                "Tôi không muốn điều đó xảy ra, nhưng có lẽ nó sẽ xảy ra. "
+                "Tuy nhiên, giờ đây khi đã có thay đổi chế độ hoàn toàn, với những tư duy khác biệt, thông minh hơn và bớt cực đoan hơn, "
+                "có thể sẽ có điều tích cực mang tính bước ngoặt xảy ra."
+            ),
+        )
+
+        self.assertIn("Ông Donald Trump cho biết Cả một nền văn minh sẽ chết tối nay, không bao giờ có thể quay trở lại được nữa.", message)
+        self.assertIn("Ông cũng nói giờ đây khi đã có thay đổi chế độ hoàn toàn", message)
+
+    def test_format_post_message_keeps_action_threat_and_terms_for_military_post(self) -> None:
+        post = make_post(
+            "101",
+            (
+                "All U.S. Ships, Aircraft, and Military Personnel, with additional Ammunition, Weaponry, and anything else that is appropriate and necessary, "
+                "will remain in place in, and around, Iran, until such time as the REAL AGREEMENT reached is fully complied with. "
+                "If for any reason it is not, then the Shootin' Starts, bigger, and better, and stronger than anyone has ever seen before. "
+                "It was agreed, a long time ago - NO NUCLEAR WEAPONS and, the Strait of Hormuz WILL BE OPEN & SAFE."
+            ),
+        )
+
+        message = format_post_message(
+            post,
+            translated_text=(
+                "Tất cả tàu, máy bay và quân nhân Mỹ, cùng với thêm đạn dược, vũ khí và mọi thứ cần thiết, sẽ tiếp tục ở trong và xung quanh Iran "
+                "cho đến khi thỏa thuận thực sự đạt được được tuân thủ đầy đủ. "
+                "Nếu vì bất kỳ lý do nào điều đó không xảy ra, thì tiếng súng sẽ bắt đầu trở lại với quy mô lớn hơn và mạnh hơn trước. "
+                "Điều này đã được thống nhất từ lâu - không có vũ khí hạt nhân và eo biển Hormuz sẽ mở và an toàn."
+            ),
+        )
+
+        self.assertIn("Ông Donald Trump cho biết lực lượng và khí tài Mỹ sẽ tiếp tục hiện diện quanh Iran cho đến khi thỏa thuận thực sự đạt được được tuân thủ đầy đủ.", message)
+        self.assertIn("Ông cảnh báo Nếu vì bất kỳ lý do nào điều đó không xảy ra, thì tiếng súng sẽ bắt đầu trở lại với quy mô lớn hơn và mạnh hơn trước.", message)
+        self.assertIn("Ông nhấn mạnh không có vũ khí hạt nhân; eo biển Hormuz phải luôn mở và an toàn.", message)
+
+    def test_format_post_message_keeps_earlier_threat_when_main_claim_comes_later(self) -> None:
+        post = make_post(
+            "101",
+            (
+                "If Iran violates the deal, fighting will resume immediately. "
+                "The United States will keep forces around Iran until the agreement is fully complied with. "
+                "No nuclear weapons will be allowed."
+            ),
+        )
+
+        message = format_post_message(
+            post,
+            translated_text=(
+                "Nếu Iran vi phạm thỏa thuận, giao tranh sẽ bùng phát trở lại ngay lập tức. "
+                "Mỹ sẽ duy trì lực lượng quanh Iran cho đến khi thỏa thuận được tuân thủ đầy đủ. "
+                "Không có vũ khí hạt nhân."
+            ),
+        )
+
+        self.assertIn("Ông Donald Trump cho biết Mỹ sẽ duy trì lực lượng quanh Iran cho đến khi thỏa thuận được tuân thủ đầy đủ.", message)
+        self.assertIn("Ông cảnh báo Nếu Iran vi phạm thỏa thuận, giao tranh sẽ bùng phát trở lại ngay lập tức.", message)
+        self.assertIn("Ông nhấn mạnh Không có vũ khí hạt nhân.", message)
+
+    def test_format_post_message_keeps_meaningful_quoted_terms(self) -> None:
+        post = make_post(
+            "101",
+            'He praised the so-called "Big Beautiful Bill" and said it would cut taxes for workers.',
+        )
+
+        message = format_post_message(
+            post,
+            translated_text='Ông ca ngợi cái gọi là "Big Beautiful Bill" và nói dự luật này sẽ giảm thuế cho người lao động.',
+        )
+
+        self.assertIn('Big Beautiful Bill', message)
+        self.assertNotIn('cái gọi là và', message)
 
     def test_translation_is_applied_before_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

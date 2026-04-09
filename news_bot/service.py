@@ -87,12 +87,22 @@ def _drop_terminal_punctuation(text: str) -> str:
     return text.rstrip(" .!?:;")
 
 
-def _summary_clause(text: str) -> str:
+def _clean_trump_summary_text(text: str) -> str:
     cleaned = _normalize_spaces(_drop_terminal_punctuation(text))
     cleaned = re.sub(r"\b[Tt]ổng thống\s+DONALD J\.?\s*TRUMP\b", "", cleaned).strip(" ,")
     cleaned = re.sub(r"\((?=[^)]*[A-ZÀ-Ỹ]{4,})[^)]*\)", "", cleaned).strip(" ,")
-    cleaned = re.sub(r"[“”\"']{2,}", "", cleaned)
-    return _normalize_spaces(cleaned)
+    cleaned = re.sub(
+        r"\b(thất bại|giả mạo|kẻ phản bội|người thất bại|rino|cực tả|cánh tả cực đoan)\b\s+",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\b(KẾ HOẠCH|KẾ HOẠCH MƯỜI ĐIỂM|GIẢ MẠO|TRÒ LỪA BỊP)\b", "", cleaned)
+    return _normalize_spaces(cleaned.strip(" ,"))
+
+
+def _summary_clause(text: str) -> str:
+    return _clean_trump_summary_text(text)
 
 
 def _brief_clause(text: str, limit: int) -> str:
@@ -108,28 +118,240 @@ def _brief_clause(text: str, limit: int) -> str:
     return _truncate_sentence(cleaned, limit)
 
 
+def _neutral_support_clause(text: str) -> str:
+    cleaned = _brief_clause(text, 110)
+    cleaned = re.sub(r"^\s*Tôi\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\s*Chúng tôi\s+", "", cleaned, flags=re.IGNORECASE)
+    return _normalize_spaces(cleaned)
+
+@dataclass(slots=True)
+class TrumpFactSlots:
+    main_claim: str | None = None
+    condition_or_threat: str | None = None
+    impact_or_term: str | None = None
+    fallback_details: tuple[str, ...] = ()
+
+
+def _rewrite_fact_clause_vi(text: str, limit: int) -> str:
+    cleaned = _summary_clause(text)
+    replacements = (
+        (r"^\s*Tôi không muốn", "ông không muốn"),
+        (r"^\s*Tôi cho rằng", "ông cho rằng"),
+        (r"^\s*Tôi tin rằng", "ông tin rằng"),
+        (r"^\s*Chúng tôi sẽ", "Mỹ sẽ"),
+        (r"^\s*Chúng tôi đang", "Mỹ đang"),
+        (r"^\s*Chúng tôi", "Mỹ"),
+        (
+            r"Tất cả tàu, máy bay và quân nhân Mỹ, cùng với thêm đạn dược, vũ khí(?: và mọi thứ cần thiết(?: cho việc tiêu diệt một kẻ thù vốn đã bị suy yếu đáng kể)?)?",
+            "lực lượng và khí tài Mỹ",
+        ),
+        (r"lực lượng và khí tài Mỹ,\s*sẽ", "lực lượng và khí tài Mỹ sẽ"),
+        (r"sẽ tiếp tục ở trong và xung quanh Iran", "sẽ tiếp tục hiện diện quanh Iran"),
+        (r"ở trong và xung quanh Iran", "quanh Iran"),
+        (
+            r"Nếu vì bất kỳ lý do nào điều đó không xảy ra(?:, dù rất khó xảy ra)?, thì tiếng súng sẽ bắt đầu trở lại,? lớn hơn,? tốt hơn và mạnh hơn bất kỳ điều gì từng thấy trước đây",
+            "nếu thỏa thuận không được tuân thủ, giao tranh sẽ bùng phát trở lại ở quy mô lớn hơn",
+        ),
+        (
+            r"Điều này đã được thống nhất từ lâu,? bất chấp mọi luận điệu giả tạo trái ngược - không có vũ khí hạt nhân và eo biển Hormuz sẽ mở và an toàn",
+            "không có vũ khí hạt nhân; eo biển Hormuz phải luôn mở và an toàn",
+        ),
+        (
+            r"Điều này đã được thống nhất từ lâu - không có vũ khí hạt nhân và eo biển Hormuz sẽ mở và an toàn",
+            "không có vũ khí hạt nhân; eo biển Hormuz phải luôn mở và an toàn",
+        ),
+    )
+    for pattern, replacement in replacements:
+        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\s*Tuy nhiên,\s*", "", cleaned, flags=re.IGNORECASE)
+    return _brief_clause(_normalize_spaces(cleaned), limit)
+
+
+def _classify_trump_fact(sentence: str) -> tuple[str, str]:
+    cleaned = _rewrite_fact_clause_vi(sentence, 170)
+    lowered = cleaned.lower()
+    if not cleaned:
+        return ("other", "")
+
+    main_claim_markers = (
+        "sẽ tiếp tục",
+        "sẽ ở lại",
+        "sẽ remain",
+        "cho đến khi",
+        "sẽ làm việc",
+        "sẽ hợp tác",
+        "sẽ hỗ trợ",
+        "sẽ đàm phán",
+        "đã được đảm nhận",
+        "đã giành được",
+        "ủng hộ",
+        "đồng ý",
+    )
+    threat_markers = (
+        "nếu",
+        "tiếng súng",
+        "giao tranh",
+        "sẽ bắt đầu",
+        "sẽ chết",
+        "không muốn điều đó xảy ra",
+        "có thể xảy ra",
+        "nguy cơ",
+        "cảnh báo",
+    )
+    term_markers = (
+        "không có vũ khí hạt nhân",
+        "eo biển hormuz",
+        "mở và an toàn",
+        "thay đổi chế độ",
+        "47 năm",
+        "tham nhũng",
+        "thời kỳ",
+        "bước ngoặt",
+        "có thể bắt đầu",
+        "có thể mở ra",
+        "sẽ kết thúc",
+        "sẽ chấm dứt",
+        "thỏa thuận",
+        "điều khoản",
+    )
+
+    if any(marker in lowered for marker in main_claim_markers):
+        return ("main_claim", cleaned)
+    if any(marker in lowered for marker in threat_markers):
+        return ("condition_or_threat", cleaned)
+    if any(marker in lowered for marker in term_markers):
+        return ("impact_or_term", cleaned)
+    return ("other", cleaned)
+
+
+def _collect_trump_facts(sentences: list[str]) -> list[tuple[str, str]]:
+    facts: list[tuple[str, str]] = []
+    for sentence in sentences:
+        category, cleaned = _classify_trump_fact(sentence)
+        if cleaned:
+            facts.append((category, cleaned))
+    return facts
+
+
+def _extract_trump_fact_slots(sentences: list[str]) -> TrumpFactSlots:
+    slots = TrumpFactSlots()
+    fallback_details: list[str] = []
+
+    for category, cleaned in _collect_trump_facts(sentences):
+        if not cleaned:
+            continue
+        if category == "main_claim" and slots.main_claim is None:
+            slots.main_claim = cleaned
+        elif category == "condition_or_threat" and slots.condition_or_threat is None:
+            slots.condition_or_threat = cleaned
+        elif category == "impact_or_term" and slots.impact_or_term is None:
+            slots.impact_or_term = cleaned
+        else:
+            fallback_details.append(cleaned)
+
+    if slots.main_claim is None and fallback_details:
+        slots.main_claim = fallback_details.pop(0)
+    if slots.condition_or_threat is None and fallback_details:
+        slots.condition_or_threat = fallback_details.pop(0)
+    if slots.impact_or_term is None and fallback_details:
+        slots.impact_or_term = fallback_details.pop(0)
+    slots.fallback_details = tuple(fallback_details)
+    return slots
+
+
+def _prefixed_trump_sentence(clause: str, limit: int) -> str:
+    compact = _brief_clause(clause, max(40, limit))
+    lowered = compact.lower()
+    if any(marker in lowered for marker in ("nếu", "giao tranh", "tiếng súng", "sẽ chết", "nguy cơ")):
+        sentence = f"Ông cảnh báo {compact}."
+    elif any(marker in lowered for marker in ("không có vũ khí hạt nhân", "eo biển hormuz", "thỏa thuận", "điều khoản")):
+        sentence = f"Ông nhấn mạnh {compact}."
+    else:
+        sentence = f"Ông cũng nói {compact}."
+    return _truncate_sentence(sentence, limit)
+
+
+def _pick_lead_and_supports(
+    facts: list[tuple[str, str]],
+) -> tuple[str | None, list[str]]:
+    if not facts:
+        return (None, [])
+
+    lead_index = 0
+    for index, (_category, clause) in enumerate(facts):
+        lowered = clause.lower()
+        if lowered.startswith("ông không muốn") or lowered.startswith("nếu "):
+            continue
+        lead_index = index
+        break
+
+    lead_category, lead = facts[lead_index]
+    remaining = facts[:lead_index] + facts[lead_index + 1 :]
+
+    def first_match(categories: tuple[str, ...]) -> str | None:
+        for category, clause in remaining:
+            if category in categories and clause != lead:
+                return clause
+        return None
+
+    supports: list[str] = []
+    if lead_category == "main_claim":
+        for candidate in (
+            first_match(("condition_or_threat",)),
+            first_match(("impact_or_term",)),
+            first_match(("other",)),
+        ):
+            if candidate and candidate not in supports:
+                supports.append(candidate)
+    elif lead_category == "condition_or_threat":
+        for candidate in (
+            first_match(("main_claim",)),
+            first_match(("impact_or_term",)),
+            first_match(("other",)),
+        ):
+            if candidate and candidate not in supports:
+                supports.append(candidate)
+    else:
+        for candidate in (
+            first_match(("other",)),
+            first_match(("main_claim",)),
+            first_match(("impact_or_term",)),
+            first_match(("condition_or_threat",)),
+        ):
+            if candidate and candidate not in supports:
+                supports.append(candidate)
+
+    if not supports:
+        for _category, clause in remaining:
+            if clause != lead:
+                supports.append(clause)
+            if len(supports) >= 2:
+                break
+
+    return (lead, supports[:2])
+
+
 def _rewrite_trump_summary_vi(sentences: list[str], limit: int) -> str:
     if not sentences:
         return ""
 
-    lead = _brief_clause(sentences[0], min(120, limit))
+    facts = _collect_trump_facts(sentences)
+    lead_raw, support_clauses = _pick_lead_and_supports(facts)
+    lead = _brief_clause(lead_raw or "", min(300, limit))
     if lead:
         summary_parts = [f"Ông Donald Trump cho biết {lead}."]
     else:
         summary_parts = []
 
-    support_clauses = [
-        clause
-        for clause in (_brief_clause(sentence, 110) for sentence in sentences[1:])
-        if clause
-    ]
-    if support_clauses:
-        joined = "; ".join(support_clauses[:2])
-        support_sentence = f"Ông cũng nói {joined}."
+    for index, clause in enumerate(support_clauses[:2]):
+        remaining = max(45, limit - len(" ".join(summary_parts)) - 1)
+        support_sentence = _prefixed_trump_sentence(clause, remaining if index == 0 else min(remaining, 120))
         projected = " ".join(summary_parts + [support_sentence]).strip()
         if len(projected) > limit:
-            remaining = max(30, limit - len(" ".join(summary_parts)) - 1)
-            support_sentence = _truncate_sentence(support_sentence, remaining)
+            if index == 0:
+                support_sentence = _truncate_sentence(support_sentence, max(30, remaining))
+                summary_parts.append(support_sentence)
+            break
         summary_parts.append(support_sentence)
 
     return _truncate_sentence(" ".join(summary_parts), limit)
@@ -144,6 +366,12 @@ def _summarize_caption(
     cleaned = _normalize_spaces(URL_PATTERN.sub("", text))
     if not cleaned:
         return ""
+    if source_id == "truthsocial:realDonaldTrump":
+        source_scan_limit = max(limit * 2, 420)
+        source_scan_sentences = max(max_sentences + 2, 5)
+    else:
+        source_scan_limit = limit
+        source_scan_sentences = max_sentences
     sentences = re.split(r"(?<=[.!?])\s+", cleaned)
     compact_sentences: list[str] = []
     current_length = 0
@@ -153,14 +381,14 @@ def _summarize_caption(
             continue
         separator = 1 if compact_sentences else 0
         projected = current_length + separator + len(sentence)
-        if projected > limit and len(compact_sentences) >= 2:
+        if projected > source_scan_limit and len(compact_sentences) >= 2:
             break
-        if projected > limit:
-            compact_sentences.append(_truncate_sentence(sentence, limit))
+        if projected > source_scan_limit:
+            compact_sentences.append(_truncate_sentence(sentence, source_scan_limit))
             break
         compact_sentences.append(sentence)
         current_length = projected
-        if len(compact_sentences) >= max_sentences:
+        if len(compact_sentences) >= source_scan_sentences:
             break
     if not compact_sentences:
         return _truncate_sentence(cleaned, limit)
@@ -302,7 +530,7 @@ def _build_summary_lines(
     summary_lines: list[str] = []
     caption_summary = _summarize_caption(
         translated_text or _post_caption_text(post),
-        limit=220,
+        limit=360 if post.source_id == "truthsocial:realDonaldTrump" else 220,
         source_id=post.source_id,
         max_sentences=3,
     )
