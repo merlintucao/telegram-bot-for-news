@@ -3,6 +3,7 @@ from __future__ import annotations
 from .config import AppConfig
 from .source_types import SourceAdapter
 from .rss import RSSFeedSource
+from .trump_source import ResilientTrumpSource, TrumpFallbackFeedSource
 from .truthsocial import TruthSocialClient
 
 
@@ -17,7 +18,20 @@ def build_sources(config: AppConfig) -> list[SourceAdapter]:
             continue
 
         if normalized in {"truthsocial", "truthsocial_trump"}:
-            sources.append(TruthSocialClient(config))
+            fallback_feeds = tuple(
+                TrumpFallbackFeedSource(config, feed_url, ordinal=index)
+                for index, feed_url in enumerate(config.truthsocial_fallback_feed_urls)
+            )
+            if fallback_feeds:
+                sources.append(
+                    ResilientTrumpSource(
+                        config,
+                        primary=TruthSocialClient(config),
+                        fallbacks=fallback_feeds,
+                    )
+                )
+            else:
+                sources.append(TruthSocialClient(config))
             seen.add(normalized)
             continue
 

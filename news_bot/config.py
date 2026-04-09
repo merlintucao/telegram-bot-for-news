@@ -82,6 +82,7 @@ class AppConfig:
     source_category_filters: tuple[str, ...]
     enabled_sources: tuple[str, ...]
     rss_feed_urls: tuple[str, ...]
+    truthsocial_fallback_feed_urls: tuple[str, ...]
     truthsocial_handle: str
     truthsocial_account_id: str | None
     truthsocial_base_url: str
@@ -137,6 +138,7 @@ class AppConfig:
             source_category_filters=_get_rule_list("SOURCE_CATEGORY_FILTERS", ()),
             enabled_sources=_get_list("ENABLED_SOURCES", ("truthsocial_trump",)),
             rss_feed_urls=_get_list("RSS_FEED_URLS", ()),
+            truthsocial_fallback_feed_urls=_get_list("TRUTHSOCIAL_FALLBACK_FEED_URLS", ()),
             truthsocial_handle=truthsocial_handle,
             truthsocial_account_id=account_id,
             truthsocial_base_url=os.getenv(

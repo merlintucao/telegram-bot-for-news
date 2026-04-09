@@ -115,6 +115,10 @@ def run_doctor(config: AppConfig, skip_network: bool) -> int:
             + (config.truthsocial_account_id or "not set; will use account lookup")
         )
         print(
+            f"- Truth Social fallback feeds configured: "
+            f"{len(config.truthsocial_fallback_feed_urls)}"
+        )
+        print(
             "- Truth Social cookie auto-reload: "
             + (
                 "enabled"

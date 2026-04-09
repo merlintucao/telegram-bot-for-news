@@ -16,6 +16,7 @@ def make_config() -> AppConfig:
         source_category_filters=(),
         enabled_sources=("rss",),
         rss_feed_urls=("https://example.com/feed.xml",),
+        truthsocial_fallback_feed_urls=(),
         truthsocial_handle="realDonaldTrump",
         truthsocial_account_id="123",
         truthsocial_base_url="https://truthsocial.com",
@@ -99,6 +100,34 @@ class RSSFeedSourceTests(unittest.TestCase):
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0].id, "tag:example.com,2026:2")
         self.assertEqual(posts[0].source_name, "Example Atom")
+
+    def test_parse_rss_feed_preserves_custom_truthsocial_fields(self) -> None:
+        xml_text = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:truth="https://truthsocial.com/ns">
+  <channel>
+    <title>Trump Mirror</title>
+    <item>
+      <title>Mirror Story</title>
+      <link>https://mirror.example/statuses/1</link>
+      <guid>mirror-1</guid>
+      <pubDate>Tue, 07 Apr 2026 08:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Summary one</p>]]></description>
+      <truth:originalUrl>https://truthsocial.com/@realDonaldTrump/116372694697146221</truth:originalUrl>
+      <truth:originalId>116372694697146221</truth:originalId>
+    </item>
+  </channel>
+</rss>
+"""
+        source = RSSFeedSource(make_config(), "https://example.com/feed.xml")
+
+        metadata = source._parse_feed(xml_text)
+        post = metadata["posts"][0]
+
+        self.assertEqual(
+            post.raw_payload["originalUrl"],
+            "https://truthsocial.com/@realDonaldTrump/116372694697146221",
+        )
+        self.assertEqual(post.raw_payload["originalId"], "116372694697146221")
 
 
 if __name__ == "__main__":

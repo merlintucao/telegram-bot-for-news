@@ -220,6 +220,17 @@ class RSSFeedSource:
                         )
                     )
 
+        extra_fields: dict[str, str] = {}
+        for child in item:
+            child_name = _local_name(child.tag)
+            if child_name in {"title", "link", "guid", "description", "encoded", "content", "pubDate", "published", "updated", "category", "enclosure"}:
+                continue
+            if list(child):
+                continue
+            value = "".join(child.itertext()).strip()
+            if value:
+                extra_fields[child_name] = value
+
         return SourcePost(
             source_id=self.source_id,
             source_name=feed_title,
@@ -235,8 +246,10 @@ class RSSFeedSource:
                 "id": entry_id,
                 "title": title,
                 "link": link,
+                "description": description,
                 "published": published,
                 "feed_url": self.feed_url,
+                **extra_fields,
             },
             categories=categories,
         )

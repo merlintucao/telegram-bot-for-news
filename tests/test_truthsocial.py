@@ -18,6 +18,7 @@ def make_config(cookie_file: Path) -> AppConfig:
         source_category_filters=(),
         enabled_sources=("truthsocial_trump",),
         rss_feed_urls=(),
+        truthsocial_fallback_feed_urls=(),
         truthsocial_handle="realDonaldTrump",
         truthsocial_account_id="123",
         truthsocial_base_url="https://truthsocial.com",
