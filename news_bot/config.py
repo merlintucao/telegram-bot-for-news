@@ -9,6 +9,13 @@ KNOWN_TRUTHSOCIAL_ACCOUNT_IDS = {
     "realdonaldtrump": "107780257626128497",
 }
 
+DEFAULT_REUTERS_RSS_URL = (
+    "https://news.google.com/rss/search?"
+    "q=site:reuters.com&hl=en-US&gl=US&ceid=US:en"
+)
+DEFAULT_AP_WORLD_RSS_URL = "https://rss.noleron.com/apnews/topics/world-news"
+DEFAULT_FT_RSS_URL = "https://www.ft.com/rss/home/international"
+
 
 def _strip_quotes(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
@@ -114,6 +121,9 @@ class AppConfig:
     image_summary_model: str = "gpt-4.1-mini"
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
+    reuters_rss_url: str = DEFAULT_REUTERS_RSS_URL
+    ap_world_rss_url: str = DEFAULT_AP_WORLD_RSS_URL
+    ft_rss_url: str = DEFAULT_FT_RSS_URL
 
     @classmethod
     def from_env(cls, env_file: str = ".env") -> "AppConfig":
@@ -192,4 +202,10 @@ class AppConfig:
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
             openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
             or "https://api.openai.com/v1",
+            reuters_rss_url=os.getenv("REUTERS_RSS_URL", DEFAULT_REUTERS_RSS_URL).strip()
+            or DEFAULT_REUTERS_RSS_URL,
+            ap_world_rss_url=os.getenv("AP_WORLD_RSS_URL", DEFAULT_AP_WORLD_RSS_URL).strip()
+            or DEFAULT_AP_WORLD_RSS_URL,
+            ft_rss_url=os.getenv("FT_RSS_URL", DEFAULT_FT_RSS_URL).strip()
+            or DEFAULT_FT_RSS_URL,
         )

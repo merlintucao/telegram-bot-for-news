@@ -8,11 +8,12 @@ import sys
 import time
 from dataclasses import asdict
 
+from .ap import APWorldRSSSource
 from .config import AppConfig
 from .cookies import load_cookie_jar
 from .filtering import build_post_filter
 from .routing import build_router
-from .service import NewsBotService
+from .service import NewsBotService, _build_translator, format_post_caption, format_post_message
 from .storage import StateStore
 from .source_types import SourceError
 from .sources import build_sources
@@ -25,8 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "command",
-        choices=("once", "run", "doctor", "status", "notify"),
-        help="Run one polling cycle, keep polling on an interval, inspect setup health, show saved bot status, or send a Telegram test message.",
+        choices=("once", "run", "doctor", "status", "notify", "send-latest-ap"),
+        help="Run one polling cycle, keep polling on an interval, inspect setup health, show saved bot status, send a Telegram test message, or send the latest AP story once.",
     )
     parser.add_argument(
         "--dry-run",
@@ -108,6 +109,12 @@ def run_doctor(config: AppConfig, skip_network: bool) -> int:
     normalized_sources = {name.lower() for name in config.enabled_sources}
     if "rss" in normalized_sources:
         print(f"- RSS feed urls configured: {len(config.rss_feed_urls)}")
+    if "reuters_rss" in normalized_sources:
+        print(f"- Reuters RSS url: {config.reuters_rss_url}")
+    if "ap_world_rss" in normalized_sources:
+        print(f"- AP World RSS url: {config.ap_world_rss_url}")
+    if "ft_rss" in normalized_sources:
+        print(f"- FT RSS url: {config.ft_rss_url}")
     if normalized_sources.intersection({"truthsocial", "truthsocial_trump"}):
         print(f"- Truth Social access mode: {config.truthsocial_auth_mode}")
         print(
@@ -403,6 +410,67 @@ def run_notify(
     return 0
 
 
+def run_send_latest_ap(
+    config: AppConfig,
+    *,
+    dry_run: bool = False,
+    source: APWorldRSSSource | None = None,
+    sender: TelegramSender | None = None,
+    translator=None,
+) -> int:
+    ap_source = source or APWorldRSSSource(config)
+    try:
+        posts = ap_source.fetch_posts(limit=1)
+    except SourceError as exc:
+        print(f"Latest AP fetch failed: {exc}")
+        return 1
+
+    if not posts:
+        print("No AP stories available.")
+        return 1
+
+    post = posts[0]
+    service = NewsBotService(
+        config,
+        StateStore(config.state_db_path),
+        [ap_source],
+        build_router(config.telegram_chat_id, config.source_chat_routes),
+        build_post_filter(config.source_keyword_filters, config.source_category_filters),
+        sender
+        or TelegramSender(
+            bot_token=config.telegram_bot_token,
+            chat_id=config.telegram_chat_id,
+            timeout_seconds=config.request_timeout_seconds,
+        ),
+        translator=translator if translator is not None else _build_translator(config),
+    )
+    translated_text = service._translate_post(post)
+    translated_auxiliary_lines = service._translate_auxiliary_summary_lines(post)
+    message = format_post_message(
+        post,
+        translated_text=translated_text,
+        translated_auxiliary_lines=translated_auxiliary_lines,
+    )
+    caption = format_post_caption(
+        post,
+        translated_text=translated_text,
+        translated_auxiliary_lines=translated_auxiliary_lines,
+    )
+
+    if dry_run:
+        print(message)
+        return 0
+
+    try:
+        service.sender.send_post(post, message, media_caption=caption)
+    except TelegramError as exc:
+        print(f"Latest AP send failed: {exc}")
+        return 1
+
+    print(f"Sent latest AP story: {post.url}")
+    return 0
+
+
 def run_command(
     config: AppConfig,
     command: str,
@@ -425,6 +493,8 @@ def run_command(
             message=notify_message,
             source_pattern=notify_source,
         )
+    if command == "send-latest-ap":
+        return run_send_latest_ap(config, dry_run=dry_run)
 
     service = NewsBotService.from_config(config, dry_run=dry_run)
     continuous = command == "run"

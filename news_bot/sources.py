@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from .ap import APWorldRSSSource
 from .config import AppConfig
+from .ft import FTRSSSource
+from .reuters import ReutersRSSSource
 from .source_types import SourceAdapter
 from .rss import RSSFeedSource
 from .trump_source import ResilientTrumpSource, TrumpFallbackFeedSource
@@ -46,8 +49,23 @@ def build_sources(config: AppConfig) -> list[SourceAdapter]:
             seen.add(normalized)
             continue
 
+        if normalized == "reuters_rss":
+            sources.append(ReutersRSSSource(config))
+            seen.add(normalized)
+            continue
+
+        if normalized == "ap_world_rss":
+            sources.append(APWorldRSSSource(config))
+            seen.add(normalized)
+            continue
+
+        if normalized == "ft_rss":
+            sources.append(FTRSSSource(config))
+            seen.add(normalized)
+            continue
+
         raise ValueError(
-            f"Unsupported source '{source_name}'. Supported values: truthsocial_trump, rss"
+            f"Unsupported source '{source_name}'. Supported values: truthsocial_trump, rss, reuters_rss, ap_world_rss, ft_rss"
         )
 
     return sources

@@ -172,6 +172,29 @@ class FailingTranslator:
         raise TranslationError("translate unavailable")
 
 
+class EchoTranslator:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def translate(self, text: str) -> str:
+        self.calls.append(text)
+        return text
+
+
+class UnchangedThenTranslatedTranslator:
+    def __init__(self, translated_text: str) -> None:
+        self.translated_text = translated_text
+        self.calls: list[str] = []
+        self.return_original = True
+
+    def translate(self, text: str) -> str:
+        self.calls.append(text)
+        if self.return_original:
+            self.return_original = False
+            return text
+        return self.translated_text
+
+
 class FakeImageSummarizer:
     def __init__(self, summary: str) -> None:
         self.summary = summary
@@ -266,7 +289,7 @@ class ServiceTests(unittest.TestCase):
         message = format_post_message(make_post("101", "hello world"))
         self.assertTrue(message.startswith("🚨 BREAKING from Donald Trump"))
         self.assertIn(
-            "🚨 BREAKING from Donald Trump\n\nPosted: 15:00 07/04/2026",
+            "🚨 BREAKING from Donald Trump\nPosted: 15:00 07/04/2026",
             message,
         )
         self.assertIn("hello world", message)
@@ -819,6 +842,142 @@ class ServiceTests(unittest.TestCase):
             self.assertNotIn("hello world", sender.messages[0])
             self.assertNotIn("The post includes 1 image.", sender.messages[0])
 
+    def test_unchanged_english_translation_uses_vietnamese_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=("ap_world_rss",),
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_fallback_feed_urls=config.truthsocial_fallback_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+                translation_retry_attempts=2,
+                translation_retry_backoff_seconds=0,
+                translation_failure_placeholder="Ban dich tam thoi chua san sang.",
+            )
+            store = StateStore(db_path)
+            post = SourcePost(
+                source_id="rss:ap-world",
+                source_name="AP News",
+                id="ap-english-1",
+                account_handle="AP News",
+                created_at="2026-04-07T08:00:00Z",
+                url="https://apnews.com/article/test-story",
+                body_text="Israeli Prime Minister Benjamin Netanyahu said he authorized direct negotiations with Lebanon.",
+                is_reply=False,
+                is_reblog=False,
+                media_attachments=(),
+                raw_payload={"id": "ap-english-1"},
+            )
+            client = FakeClient([[post]], source_id="rss:ap-world", source_name="AP News")
+            sender = FakeSender()
+            translator = EchoTranslator()
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                sleep_fn=lambda seconds: None,
+                translator=translator,
+            )
+
+            summary = service.run_once()
+
+            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(len(translator.calls), 2)
+            self.assertIn("Ban dich tam thoi chua san sang.", sender.messages[0])
+            self.assertNotIn("Israeli Prime Minister", sender.messages[0])
+
+    def test_unchanged_english_translation_retries_before_using_vietnamese_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=("ap_world_rss",),
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_fallback_feed_urls=config.truthsocial_fallback_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+                translation_retry_attempts=2,
+                translation_retry_backoff_seconds=0,
+                translation_failure_placeholder="Ban dich tam thoi chua san sang.",
+            )
+            store = StateStore(db_path)
+            post = SourcePost(
+                source_id="rss:ap-world",
+                source_name="AP News",
+                id="ap-english-2",
+                account_handle="AP News",
+                created_at="2026-04-07T08:00:00Z",
+                url="https://apnews.com/article/test-story",
+                body_text="Israeli Prime Minister Benjamin Netanyahu said he authorized direct negotiations with Lebanon.",
+                is_reply=False,
+                is_reblog=False,
+                media_attachments=(),
+                raw_payload={"id": "ap-english-2"},
+            )
+            client = FakeClient([[post]], source_id="rss:ap-world", source_name="AP News")
+            sender = FakeSender()
+            translator = UnchangedThenTranslatedTranslator(
+                "Thủ tướng Israel Benjamin Netanyahu cho biết ông đã cho phép đàm phán trực tiếp với Lebanon."
+            )
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                sleep_fn=lambda seconds: None,
+                translator=translator,
+            )
+
+            summary = service.run_once()
+
+            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(len(translator.calls), 2)
+            self.assertIn("Thủ tướng Israel Benjamin Netanyahu", sender.messages[0])
+            self.assertNotIn("Ban dich tam thoi chua san sang.", sender.messages[0])
+
     def test_multiple_sources_are_processed_independently(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "state.sqlite3"
@@ -878,6 +1037,92 @@ class ServiceTests(unittest.TestCase):
 
         self.assertTrue(message.startswith("Example News story"))
         self.assertNotIn("from Example News", message)
+
+    def test_format_post_message_for_reuters_story_includes_link_and_translated_summary(self) -> None:
+        post = SourcePost(
+            source_id="rss:reuters",
+            source_name="Reuters",
+            id="story-1",
+            account_handle="Reuters",
+            created_at="2026-04-07T08:00:00Z",
+            url="https://news.google.com/rss/articles/test-1",
+            body_text="US fourth-quarter GDP growth revised lower to a 0.5% rate",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-1", "source": "Reuters"},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="Tăng trưởng GDP quý 4 của Mỹ được điều chỉnh giảm xuống mức 0,5%.",
+        )
+
+        self.assertTrue(message.startswith("Reuters story"))
+        self.assertIn("Posted: 15:00 07/04/2026", message)
+        self.assertIn("Link: https://news.google.com/rss/articles/test-1", message)
+        self.assertIn("Tăng trưởng GDP quý 4 của Mỹ được điều chỉnh giảm xuống mức 0,5%.", message)
+
+    def test_format_post_message_for_ap_story_includes_link_and_translated_summary(self) -> None:
+        post = SourcePost(
+            source_id="rss:ap-world",
+            source_name="AP News",
+            id="story-ap-1",
+            account_handle="AP News",
+            created_at="2026-04-07T08:00:00Z",
+            url="https://apnews.com/article/test-story",
+            body_text=(
+                "Netanyahu authorizes direct talks with Lebanon ‘as soon as possible’\n\n"
+                "Israeli Prime Minister Benjamin Netanyahu says he has authorized direct negotiations with Lebanon as soon as possible."
+            ),
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-ap-1"},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text=(
+                "Thủ tướng Israel Benjamin Netanyahu cho biết ông đã cho phép đàm phán trực tiếp với Lebanon sớm nhất có thể."
+            ),
+        )
+
+        self.assertTrue(message.startswith("AP News"))
+        self.assertIn("Posted: 15:00 07/04/2026", message)
+        self.assertNotIn("Link:", message)
+        self.assertIn(
+            "Thủ tướng Israel Benjamin Netanyahu cho biết ông đã cho phép đàm phán trực tiếp với Lebanon sớm nhất có thể.",
+            message,
+        )
+
+    def test_format_post_message_for_ft_story_matches_ap_style(self) -> None:
+        post = SourcePost(
+            source_id="rss:ft",
+            source_name="FT",
+            id="story-ft-1",
+            account_handle="FT",
+            created_at="2026-04-07T08:00:00Z",
+            url="https://www.ft.com/content/test-story",
+            body_text="Stocks rise on hopes for truce after Israeli strikes on country have threatened to derail planned peace talks",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-ft-1"},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="Chứng khoán tăng nhờ kỳ vọng ngừng bắn sau khi các cuộc không kích của Israel đe dọa làm chệch hướng các cuộc đàm phán hòa bình.",
+        )
+
+        self.assertTrue(message.startswith("FT"))
+        self.assertNotIn("Posted:", message)
+        self.assertNotIn("Link:", message)
+        self.assertIn(
+            "Chứng khoán tăng nhờ kỳ vọng ngừng bắn sau khi các cuộc không kích của Israel đe dọa làm chệch hướng các cuộc đàm phán hòa bình.",
+            message,
+        )
 
     def test_source_routes_can_override_and_broadcast(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -948,6 +1193,217 @@ class ServiceTests(unittest.TestCase):
                     ("@ap_backup", "story-301"),
                 ],
             )
+
+    def test_reuters_story_uses_default_group_and_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=("reuters_rss",),
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_fallback_feed_urls=config.truthsocial_fallback_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+                translation_retry_attempts=config.translation_retry_attempts,
+                translation_retry_backoff_seconds=config.translation_retry_backoff_seconds,
+                translation_failure_placeholder=config.translation_failure_placeholder,
+            )
+            store = StateStore(db_path)
+            reuters_post = SourcePost(
+                source_id="rss:reuters",
+                source_name="Reuters",
+                id="reuters-101",
+                account_handle="Reuters",
+                created_at="2026-04-07T09:00:00Z",
+                url="https://news.google.com/rss/articles/reuters-101",
+                body_text="US fourth-quarter GDP growth revised lower to a 0.5% rate",
+                is_reply=False,
+                is_reblog=False,
+                media_attachments=(),
+                raw_payload={"id": "reuters-101", "source": "Reuters"},
+            )
+            client = FakeClient([[reuters_post], []], source_id="rss:reuters", source_name="Reuters")
+            sender = FakeSender()
+            translator = FakeTranslator("Tăng trưởng GDP quý 4 của Mỹ được điều chỉnh giảm xuống mức 0,5%.")
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                translator=translator,
+            )
+
+            first = service.run_once()
+            second = service.run_once()
+            source_status = store.get_source_statuses(filtered_limit=1)[0]
+
+            self.assertEqual(first.sent_count, 1)
+            self.assertEqual(sender.deliveries, [("@chat", "reuters-101")])
+            self.assertEqual(second.sent_count, 0)
+            self.assertEqual(source_status.source_key, "rss:reuters")
+            self.assertEqual(source_status.checkpoint_id, "reuters-101")
+
+    def test_ap_story_uses_default_group_and_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=("ap_world_rss",),
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_fallback_feed_urls=config.truthsocial_fallback_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+                translation_retry_attempts=config.translation_retry_attempts,
+                translation_retry_backoff_seconds=config.translation_retry_backoff_seconds,
+                translation_failure_placeholder=config.translation_failure_placeholder,
+            )
+            store = StateStore(db_path)
+            ap_post = SourcePost(
+                source_id="rss:ap-world",
+                source_name="AP News",
+                id="ap-101",
+                account_handle="AP News",
+                created_at="2026-04-07T09:00:00Z",
+                url="https://apnews.com/article/test-story",
+                body_text="Netanyahu authorizes direct talks with Lebanon ‘as soon as possible’",
+                is_reply=False,
+                is_reblog=False,
+                media_attachments=(),
+                raw_payload={"id": "ap-101"},
+            )
+            client = FakeClient([[ap_post], []], source_id="rss:ap-world", source_name="AP News")
+            sender = FakeSender()
+            translator = FakeTranslator(
+                "Thủ tướng Israel Benjamin Netanyahu cho biết ông đã cho phép đàm phán trực tiếp với Lebanon sớm nhất có thể."
+            )
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                translator=translator,
+            )
+
+            first = service.run_once()
+            second = service.run_once()
+            source_status = store.get_source_statuses(filtered_limit=1)[0]
+
+            self.assertEqual(first.sent_count, 1)
+            self.assertEqual(sender.deliveries, [("@chat", "ap-101")])
+            self.assertEqual(second.sent_count, 0)
+            self.assertEqual(source_status.source_key, "rss:ap-world")
+            self.assertEqual(source_status.checkpoint_id, "ap-101")
+
+    def test_ft_story_uses_default_group_and_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=("ft_rss",),
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_fallback_feed_urls=config.truthsocial_fallback_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+                translation_retry_attempts=config.translation_retry_attempts,
+                translation_retry_backoff_seconds=config.translation_retry_backoff_seconds,
+                translation_failure_placeholder=config.translation_failure_placeholder,
+            )
+            store = StateStore(db_path)
+            ft_post = SourcePost(
+                source_id="rss:ft",
+                source_name="FT",
+                id="ft-101",
+                account_handle="FT",
+                created_at="2026-04-07T09:00:00Z",
+                url="https://www.ft.com/content/test-story",
+                body_text="Stocks rise on hopes for truce after Israeli strikes on country have threatened to derail planned peace talks",
+                is_reply=False,
+                is_reblog=False,
+                media_attachments=(),
+                raw_payload={"id": "ft-101"},
+            )
+            client = FakeClient([[ft_post], []], source_id="rss:ft", source_name="FT")
+            sender = FakeSender()
+            translator = FakeTranslator(
+                "Chứng khoán tăng nhờ kỳ vọng ngừng bắn sau khi các cuộc không kích của Israel đe dọa làm chệch hướng các cuộc đàm phán hòa bình."
+            )
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                translator=translator,
+            )
+
+            first = service.run_once()
+            second = service.run_once()
+            source_status = store.get_source_statuses(filtered_limit=1)[0]
+
+            self.assertEqual(first.sent_count, 1)
+            self.assertEqual(sender.deliveries, [("@chat", "ft-101")])
+            self.assertEqual(second.sent_count, 0)
+            self.assertEqual(source_status.source_key, "rss:ft")
+            self.assertEqual(source_status.checkpoint_id, "ft-101")
 
     def test_keyword_filter_only_delivers_matching_posts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

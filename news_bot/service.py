@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from difflib import SequenceMatcher
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -23,6 +24,7 @@ LOGGER = logging.getLogger(__name__)
 HANDLE_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 URL_PATTERN = re.compile(r"https?://\S+")
 VIETNAM_TZ = timezone(timedelta(hours=7))
+WIRE_STORY_SOURCE_IDS = {"rss:reuters", "rss:ap-world", "rss:ft"}
 
 
 def trim_message(text: str, limit: int = 4096) -> str:
@@ -38,6 +40,12 @@ def _post_caption_text(post: SourcePost) -> str:
 def _format_header(post: SourcePost) -> str:
     if post.source_id == "truthsocial:realDonaldTrump":
         return "🚨 BREAKING from Donald Trump"
+    if post.source_id == "rss:reuters":
+        return "Reuters story"
+    if post.source_id == "rss:ap-world":
+        return "AP News"
+    if post.source_id == "rss:ft":
+        return "FT"
 
     if post.source_id.startswith("rss:"):
         kind = "story"
@@ -74,6 +82,39 @@ def _format_posted_at(created_at: str) -> str:
 
 def _normalize_spaces(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _has_vietnamese_diacritics(text: str) -> bool:
+    return bool(re.search(r"[àáảãạăắằẳẵặâấầẩẫậđèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]", text.lower()))
+
+
+def _is_likely_english_text(text: str) -> bool:
+    normalized = _normalize_spaces(text).lower()
+    if not normalized or _has_vietnamese_diacritics(normalized):
+        return False
+    common_words = re.findall(
+        r"\b(the|and|with|from|that|said|will|has|have|after|amid|into|between|for|of|to|as|at|is|are)\b",
+        normalized,
+    )
+    return len(common_words) >= 2
+
+
+def _normalize_translation_comparison(text: str) -> str:
+    normalized = _normalize_spaces(text).lower()
+    normalized = normalized.replace("“", '"').replace("”", '"').replace("’", "'").replace("‘", "'")
+    normalized = re.sub(r"[\"'`.,;:!?()\[\]{}]", "", normalized)
+    return _normalize_spaces(normalized)
+
+
+def _translation_looks_unchanged(source_text: str, translated_text: str) -> bool:
+    source_normalized = _normalize_translation_comparison(source_text)
+    translated_normalized = _normalize_translation_comparison(translated_text)
+    if not source_normalized or not translated_normalized:
+        return False
+    if source_normalized == translated_normalized:
+        return True
+    similarity = SequenceMatcher(None, source_normalized, translated_normalized).ratio()
+    return similarity >= 0.97
 
 
 def _truncate_sentence(text: str, limit: int) -> str:
@@ -553,9 +594,13 @@ def _build_summary_lines(
     summary_lines: list[str] = []
     caption_summary = _summarize_caption(
         translated_text or _post_caption_text(post),
-        limit=360 if post.source_id == "truthsocial:realDonaldTrump" else 220,
+        limit=(
+            360
+            if post.source_id == "truthsocial:realDonaldTrump"
+            else 200 if post.source_id in WIRE_STORY_SOURCE_IDS else 220
+        ),
         source_id=post.source_id,
-        max_sentences=3,
+        max_sentences=2 if post.source_id in WIRE_STORY_SOURCE_IDS else 3,
     )
     if caption_summary:
         summary_lines.append(caption_summary)
@@ -574,8 +619,13 @@ def format_post_message(
 ) -> str:
     lines = [_format_header(post)]
 
-    if post.created_at:
-        lines.extend(["", f"Posted: {_format_posted_at(post.created_at)}"])
+    if post.created_at and post.source_id != "rss:ft":
+        if post.source_id == "truthsocial:realDonaldTrump":
+            lines.append(f"Posted: {_format_posted_at(post.created_at)}")
+        else:
+            lines.extend(["", f"Posted: {_format_posted_at(post.created_at)}"])
+    if post.source_id == "rss:reuters" and post.url:
+        lines.append(f"Link: {post.url}")
     summary_lines = _build_summary_lines(
         post,
         translated_text,
@@ -595,10 +645,15 @@ def format_post_caption(
     lines = [_format_header(post)]
 
     info_lines: list[str] = []
-    if post.created_at:
+    if post.created_at and post.source_id != "rss:ft":
         info_lines.append(f"Posted: {_format_posted_at(post.created_at)}")
+    if post.source_id == "rss:reuters" and post.url:
+        info_lines.append(f"Link: {post.url}")
     if info_lines:
-        lines.extend(["", *info_lines])
+        if post.source_id == "truthsocial:realDonaldTrump":
+            lines.extend(info_lines)
+        else:
+            lines.extend(["", *info_lines])
     summary_lines = _build_summary_lines(
         post,
         translated_text,
@@ -1151,6 +1206,25 @@ class NewsBotService:
                 break
 
             normalized = translated_text.strip()
+            if (
+                normalized
+                and _is_likely_english_text(text)
+                and not _has_vietnamese_diacritics(normalized)
+                and _translation_looks_unchanged(text, normalized)
+            ):
+                last_error = TranslationError("Translation returned unchanged English text.")
+                if attempt < attempts:
+                    LOGGER.warning(
+                        "Translation attempt %s/%s failed for %s: %s",
+                        attempt,
+                        attempts,
+                        context,
+                        last_error,
+                    )
+                    if backoff_seconds > 0:
+                        self.sleep_fn(float(backoff_seconds * (2 ** (attempt - 1))))
+                    continue
+                break
             if normalized:
                 return normalized
 
