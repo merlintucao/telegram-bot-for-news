@@ -25,7 +25,7 @@ HANDLE_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 URL_PATTERN = re.compile(r"https?://\S+")
 VIETNAM_TZ = timezone(timedelta(hours=7))
 WIRE_STORY_SOURCE_IDS = {"rss:reuters", "rss:ap-world", "rss:ft"}
-ATTRIBUTED_WIRE_SOURCE_IDS = {"rss:ap-world", "rss:ft"}
+ATTRIBUTED_WIRE_SOURCE_IDS = {"rss:reuters", "rss:ap-world", "rss:ft"}
 
 
 def trim_message(text: str, limit: int = 4096) -> str:
@@ -41,8 +41,6 @@ def _post_caption_text(post: SourcePost) -> str:
 def _format_header(post: SourcePost) -> str:
     if post.source_id == "truthsocial:realDonaldTrump":
         return "🚨 BREAKING from Donald Trump"
-    if post.source_id == "rss:reuters":
-        return "Reuters story"
     if post.source_id == "rss:ap-world":
         return "AP News"
     if post.source_id == "rss:ft":
@@ -713,13 +711,11 @@ def format_post_message(
 
     lines = [] if post.source_id in ATTRIBUTED_WIRE_SOURCE_IDS else [_format_header(post)]
 
-    if post.created_at and post.source_id not in {"rss:ap-world", "rss:ft"}:
+    if post.created_at and post.source_id not in ATTRIBUTED_WIRE_SOURCE_IDS:
         if post.source_id in {"truthsocial:realDonaldTrump", "x:kobeissiletter"}:
             lines.append(f"Posted: {_format_posted_at(post.created_at)}")
         else:
             lines.extend(["", f"Posted: {_format_posted_at(post.created_at)}"])
-    if post.source_id == "rss:reuters" and post.url:
-        lines.append(f"Link: {post.url}")
     summary_lines = _build_summary_lines(
         post,
         translated_text,
@@ -759,10 +755,8 @@ def format_post_caption(
     lines = [] if post.source_id in ATTRIBUTED_WIRE_SOURCE_IDS else [_format_header(post)]
 
     info_lines: list[str] = []
-    if post.created_at and post.source_id not in {"rss:ap-world", "rss:ft"}:
+    if post.created_at and post.source_id not in ATTRIBUTED_WIRE_SOURCE_IDS:
         info_lines.append(f"Posted: {_format_posted_at(post.created_at)}")
-    if post.source_id == "rss:reuters" and post.url:
-        info_lines.append(f"Link: {post.url}")
     if info_lines:
         if post.source_id in {"truthsocial:realDonaldTrump", "x:kobeissiletter"}:
             lines.extend(info_lines)

@@ -1066,7 +1066,7 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(message.startswith("Example News story"))
         self.assertNotIn("from Example News", message)
 
-    def test_format_post_message_for_reuters_story_includes_link_and_translated_summary(self) -> None:
+    def test_format_post_message_for_reuters_story_matches_wire_style(self) -> None:
         post = SourcePost(
             source_id="rss:reuters",
             source_name="Reuters",
@@ -1086,10 +1086,11 @@ class ServiceTests(unittest.TestCase):
             translated_text="Tăng trưởng GDP quý 4 của Mỹ được điều chỉnh giảm xuống mức 0,5%.",
         )
 
-        self.assertTrue(message.startswith("Reuters story"))
-        self.assertIn("Posted: 15:00 07/04/2026", message)
-        self.assertIn("Link: https://news.google.com/rss/articles/test-1", message)
+        self.assertFalse(message.startswith("Reuters"))
+        self.assertNotIn("Posted:", message)
+        self.assertNotIn("Link:", message)
         self.assertIn("Tăng trưởng GDP quý 4 của Mỹ được điều chỉnh giảm xuống mức 0,5%.", message)
+        self.assertIn("\n\nTheo Reuters", message)
 
     def test_format_post_message_for_ap_story_includes_link_and_translated_summary(self) -> None:
         post = SourcePost(

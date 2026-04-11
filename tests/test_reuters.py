@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-from unittest.mock import patch
-
 from news_bot.config import AppConfig, DEFAULT_REUTERS_RSS_URL
-from news_bot.models import SourcePost
-from news_bot.reuters import ReutersRSSSource, _extract_reuters_summary_from_html
+from news_bot.reuters import ReutersRSSSource
 
 
 def make_config() -> AppConfig:
@@ -39,17 +36,6 @@ def make_config() -> AppConfig:
 
 
 class ReutersRSSSourceTests(unittest.TestCase):
-    def test_extract_reuters_summary_from_html_prefers_meta_description(self) -> None:
-        html_text = """
-<html><head>
-  <meta property="og:description" content="Oil prices rose after new sanctions were announced.">
-</head></html>
-"""
-        self.assertEqual(
-            _extract_reuters_summary_from_html(html_text),
-            "Oil prices rose after new sanctions were announced.",
-        )
-
     def test_parse_google_news_reuters_item_uses_reuters_identity(self) -> None:
         xml_text = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -113,45 +99,30 @@ class ReutersRSSSourceTests(unittest.TestCase):
             "NATO's Rutte told allies Trump wants Hormuz commitments within days, diplomats say",
         )
 
-    def test_fetch_posts_enriches_reuters_items_with_article_summary(self) -> None:
+    def test_fetch_posts_uses_rss_summary_without_article_enrichment(self) -> None:
         source = ReutersRSSSource(make_config())
-        post = SourcePost(
-            source_id="rss:reuters",
-            source_name="Reuters",
-            id="reuters-1",
-            account_handle="Reuters",
-            created_at="2026-04-09T14:46:17Z",
-            url="https://news.google.com/rss/articles/test-3",
-            body_text="NATO's Rutte told allies Trump wants Hormuz commitments within days, diplomats say",
-            is_reply=False,
-            is_reblog=False,
-            media_attachments=(),
-            raw_payload={
-                "title": "NATO's Rutte told allies Trump wants Hormuz commitments within days, diplomats say - Reuters",
-                "link": "https://news.google.com/rss/articles/test-3",
-                "description": "",
-                "source": "Reuters",
-            },
-        )
+        xml_text = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Google News Reuters 24h</title>
+    <item>
+      <title>Oil prices rise after new sanctions - Reuters</title>
+      <link>https://news.google.com/rss/articles/test-9</link>
+      <guid>test-9</guid>
+      <pubDate>Thu, 09 Apr 2026 14:46:17 GMT</pubDate>
+      <description><![CDATA[<a href="https://news.google.com/rss/articles/test-9" target="_blank">Oil prices rise after new sanctions</a>&nbsp;&nbsp;<font color="#6f6f6f">Reuters</font>]]></description>
+      <source url="https://www.reuters.com">Reuters</source>
+    </item>
+  </channel>
+</rss>
+"""
 
-        with patch("news_bot.reuters.RSSFeedSource.fetch_posts", return_value=[post]):
-            with patch.object(
-                ReutersRSSSource,
-                "_fetch_article_summary",
-                return_value=(
-                    "https://www.reuters.com/world/test-story/",
-                    "NATO Secretary General Mark Rutte urged allies to line up commitments on Hormuz within days, diplomats said.",
-                ),
-            ):
-                posts = source.fetch_posts()
+        metadata = source._parse_feed(xml_text)
 
-        self.assertEqual(len(posts), 1)
-        enriched = posts[0]
-        self.assertEqual(enriched.url, "https://www.reuters.com/world/test-story/")
-        self.assertEqual(
-            enriched.body_text,
-            "NATO's Rutte told allies Trump wants Hormuz commitments within days, diplomats say\n\nNATO Secretary General Mark Rutte urged allies to line up commitments on Hormuz within days, diplomats said.",
-        )
+        self.assertEqual(len(metadata["posts"]), 1)
+        post = metadata["posts"][0]
+        self.assertEqual(post.url, "https://news.google.com/rss/articles/test-9")
+        self.assertEqual(post.body_text, "Oil prices rise after new sanctions")
 
 
 if __name__ == "__main__":

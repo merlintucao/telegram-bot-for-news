@@ -11,7 +11,7 @@ KNOWN_TRUTHSOCIAL_ACCOUNT_IDS = {
 
 DEFAULT_REUTERS_RSS_URL = (
     "https://news.google.com/rss/search?"
-    "q=site:reuters.com&hl=en-US&gl=US&ceid=US:en"
+    "q=when:24h+allinurl:reuters.com&ceid=US:en&hl=en-US&gl=US"
 )
 DEFAULT_AP_WORLD_RSS_URL = "https://rss.noleron.com/apnews/topics/world-news"
 DEFAULT_FT_RSS_URL = "https://www.ft.com/rss/home/international"
