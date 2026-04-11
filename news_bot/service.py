@@ -68,6 +68,12 @@ def _format_header(post: SourcePost) -> str:
     return header
 
 
+def _format_attribution(post: SourcePost) -> str:
+    if post.source_id == "x:kobeissiletter":
+        return "Theo The Kobeissi Letter"
+    return f"Theo {post.source_name}"
+
+
 def _format_posted_at(created_at: str) -> str:
     value = created_at.strip()
     if not value:
@@ -671,7 +677,8 @@ def _build_summary_lines(
     if caption_summary:
         if post.source_id in ATTRIBUTED_WIRE_SOURCE_IDS:
             summary_lines.append(caption_summary)
-            summary_lines.append(f"Theo {post.source_name}")
+            summary_lines.append("")
+            summary_lines.append(_format_attribution(post))
         else:
             summary_lines.append(caption_summary)
     summary_lines.extend(
@@ -694,7 +701,7 @@ def format_post_message(
             translated_auxiliary_lines=translated_auxiliary_lines,
         )
         lines = list(summary_lines)
-        footer_lines = [_format_header(post)]
+        footer_lines = [_format_attribution(post)]
         if post.created_at:
             footer_lines.append(f"Posted: {_format_posted_at(post.created_at)}")
         if footer_lines:
@@ -739,7 +746,7 @@ def format_post_caption(
             translated_auxiliary_lines=translated_auxiliary_lines,
         )
         lines = list(summary_lines)
-        footer_lines = [_format_header(post)]
+        footer_lines = [_format_attribution(post)]
         if post.created_at:
             footer_lines.append(f"Posted: {_format_posted_at(post.created_at)}")
         if footer_lines:

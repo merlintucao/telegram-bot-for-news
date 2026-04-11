@@ -1120,7 +1120,7 @@ class ServiceTests(unittest.TestCase):
         self.assertNotIn("Posted:", message)
         self.assertNotIn("Link:", message)
         self.assertIn(
-            "Thủ tướng Israel Benjamin Netanyahu cho biết ông đã cho phép đàm phán trực tiếp với Lebanon sớm nhất có thể.\nTheo AP News",
+            "Thủ tướng Israel Benjamin Netanyahu cho biết ông đã cho phép đàm phán trực tiếp với Lebanon sớm nhất có thể.\n\nTheo AP News",
             message,
         )
         self.assertIn(
@@ -1152,7 +1152,7 @@ class ServiceTests(unittest.TestCase):
         self.assertNotIn("Posted:", message)
         self.assertNotIn("Link:", message)
         self.assertIn(
-            "Chứng khoán tăng nhờ kỳ vọng ngừng bắn sau khi các cuộc không kích của Israel đe dọa làm chệch hướng các cuộc đàm phán hòa bình.\nTheo FT",
+            "Chứng khoán tăng nhờ kỳ vọng ngừng bắn sau khi các cuộc không kích của Israel đe dọa làm chệch hướng các cuộc đàm phán hòa bình.\n\nTheo FT",
             message,
         )
         self.assertIn(
@@ -1182,7 +1182,7 @@ class ServiceTests(unittest.TestCase):
 
         self.assertTrue(message.startswith("Thi truong tang sau du lieu lam phat moi."))
         self.assertIn(
-            "Thi truong tang sau du lieu lam phat moi.\n\nThe Kobeissi Letter\nPosted: 15:15 11/04/2026",
+            "Thi truong tang sau du lieu lam phat moi.\n\nTheo The Kobeissi Letter\nPosted: 15:15 11/04/2026",
             message,
         )
         self.assertIn("Posted: 15:15 11/04/2026", message)
