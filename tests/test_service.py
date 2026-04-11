@@ -1116,9 +1116,13 @@ class ServiceTests(unittest.TestCase):
             ),
         )
 
-        self.assertTrue(message.startswith("AP News"))
-        self.assertIn("Posted: 15:00 07/04/2026", message)
+        self.assertFalse(message.startswith("AP News"))
+        self.assertNotIn("Posted:", message)
         self.assertNotIn("Link:", message)
+        self.assertIn(
+            "Thủ tướng Israel Benjamin Netanyahu cho biết ông đã cho phép đàm phán trực tiếp với Lebanon sớm nhất có thể.\nTheo AP News",
+            message,
+        )
         self.assertIn(
             "Thủ tướng Israel Benjamin Netanyahu cho biết ông đã cho phép đàm phán trực tiếp với Lebanon sớm nhất có thể.",
             message,
@@ -1144,9 +1148,13 @@ class ServiceTests(unittest.TestCase):
             translated_text="Chứng khoán tăng nhờ kỳ vọng ngừng bắn sau khi các cuộc không kích của Israel đe dọa làm chệch hướng các cuộc đàm phán hòa bình.",
         )
 
-        self.assertTrue(message.startswith("FT"))
+        self.assertFalse(message.startswith("FT"))
         self.assertNotIn("Posted:", message)
         self.assertNotIn("Link:", message)
+        self.assertIn(
+            "Chứng khoán tăng nhờ kỳ vọng ngừng bắn sau khi các cuộc không kích của Israel đe dọa làm chệch hướng các cuộc đàm phán hòa bình.\nTheo FT",
+            message,
+        )
         self.assertIn(
             "Chứng khoán tăng nhờ kỳ vọng ngừng bắn sau khi các cuộc không kích của Israel đe dọa làm chệch hướng các cuộc đàm phán hòa bình.",
             message,
@@ -1172,9 +1180,9 @@ class ServiceTests(unittest.TestCase):
             translated_text="Thi truong tang sau du lieu lam phat moi.",
         )
 
-        self.assertTrue(message.startswith("The Kobeissi Letter"))
+        self.assertTrue(message.startswith("Thi truong tang sau du lieu lam phat moi."))
         self.assertIn(
-            "The Kobeissi Letter\nPosted: 15:15 11/04/2026",
+            "Thi truong tang sau du lieu lam phat moi.\n\nThe Kobeissi Letter\nPosted: 15:15 11/04/2026",
             message,
         )
         self.assertIn("Posted: 15:15 11/04/2026", message)

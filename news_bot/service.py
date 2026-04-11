@@ -25,6 +25,7 @@ HANDLE_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 URL_PATTERN = re.compile(r"https?://\S+")
 VIETNAM_TZ = timezone(timedelta(hours=7))
 WIRE_STORY_SOURCE_IDS = {"rss:reuters", "rss:ap-world", "rss:ft"}
+ATTRIBUTED_WIRE_SOURCE_IDS = {"rss:ap-world", "rss:ft"}
 
 
 def trim_message(text: str, limit: int = 4096) -> str:
@@ -668,7 +669,11 @@ def _build_summary_lines(
         max_sentences=2 if post.source_id in WIRE_STORY_SOURCE_IDS or post.source_id == "x:kobeissiletter" else 3,
     )
     if caption_summary:
-        summary_lines.append(caption_summary)
+        if post.source_id in ATTRIBUTED_WIRE_SOURCE_IDS:
+            summary_lines.append(caption_summary)
+            summary_lines.append(f"Theo {post.source_name}")
+        else:
+            summary_lines.append(caption_summary)
     summary_lines.extend(
         _build_auxiliary_summary_lines(post)
         if translated_auxiliary_lines is None
@@ -682,9 +687,26 @@ def format_post_message(
     translated_text: str | None = None,
     translated_auxiliary_lines: list[str] | None = None,
 ) -> str:
-    lines = [_format_header(post)]
+    if post.source_id == "x:kobeissiletter":
+        summary_lines = _build_summary_lines(
+            post,
+            translated_text,
+            translated_auxiliary_lines=translated_auxiliary_lines,
+        )
+        lines = list(summary_lines)
+        footer_lines = [_format_header(post)]
+        if post.created_at:
+            footer_lines.append(f"Posted: {_format_posted_at(post.created_at)}")
+        if footer_lines:
+            if lines:
+                lines.extend(["", *footer_lines])
+            else:
+                lines.extend(footer_lines)
+        return trim_message("\n".join(lines))
 
-    if post.created_at and post.source_id != "rss:ft":
+    lines = [] if post.source_id in ATTRIBUTED_WIRE_SOURCE_IDS else [_format_header(post)]
+
+    if post.created_at and post.source_id not in {"rss:ap-world", "rss:ft"}:
         if post.source_id in {"truthsocial:realDonaldTrump", "x:kobeissiletter"}:
             lines.append(f"Posted: {_format_posted_at(post.created_at)}")
         else:
@@ -697,7 +719,10 @@ def format_post_message(
         translated_auxiliary_lines=translated_auxiliary_lines,
     )
     if summary_lines:
-        lines.extend(["", *summary_lines])
+        if lines:
+            lines.extend(["", *summary_lines])
+        else:
+            lines.extend(summary_lines)
 
     return trim_message("\n".join(lines))
 
@@ -707,10 +732,27 @@ def format_post_caption(
     translated_text: str | None = None,
     translated_auxiliary_lines: list[str] | None = None,
 ) -> str:
-    lines = [_format_header(post)]
+    if post.source_id == "x:kobeissiletter":
+        summary_lines = _build_summary_lines(
+            post,
+            translated_text,
+            translated_auxiliary_lines=translated_auxiliary_lines,
+        )
+        lines = list(summary_lines)
+        footer_lines = [_format_header(post)]
+        if post.created_at:
+            footer_lines.append(f"Posted: {_format_posted_at(post.created_at)}")
+        if footer_lines:
+            if lines:
+                lines.extend(["", *footer_lines])
+            else:
+                lines.extend(footer_lines)
+        return trim_message("\n".join(lines), limit=1024)
+
+    lines = [] if post.source_id in ATTRIBUTED_WIRE_SOURCE_IDS else [_format_header(post)]
 
     info_lines: list[str] = []
-    if post.created_at and post.source_id != "rss:ft":
+    if post.created_at and post.source_id not in {"rss:ap-world", "rss:ft"}:
         info_lines.append(f"Posted: {_format_posted_at(post.created_at)}")
     if post.source_id == "rss:reuters" and post.url:
         info_lines.append(f"Link: {post.url}")
@@ -725,7 +767,10 @@ def format_post_caption(
         translated_auxiliary_lines=translated_auxiliary_lines,
     )
     if summary_lines:
-        lines.extend(["", *summary_lines])
+        if lines:
+            lines.extend(["", *summary_lines])
+        else:
+            lines.extend(summary_lines)
     return trim_message("\n".join(lines), limit=1024)
 
 
