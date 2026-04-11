@@ -125,13 +125,17 @@ class ResilientTrumpSource:
         errors: list[str] = []
 
         try:
-            return self.primary.fetch_posts(since_id=since_id, limit=limit)
+            return self._exclude_retruths(
+                self.primary.fetch_posts(since_id=since_id, limit=limit)
+            )
         except SourceError as exc:
             errors.append(f"primary API: {exc}")
 
         for fallback in self.fallbacks:
             try:
-                return fallback.fetch_posts(since_id=since_id, limit=limit)
+                return self._exclude_retruths(
+                    fallback.fetch_posts(since_id=since_id, limit=limit)
+                )
             except SourceError as exc:
                 errors.append(f"{fallback.source_name}: {exc}")
 
@@ -165,3 +169,7 @@ class ResilientTrumpSource:
                 detail_lines.append(f"fallback failed ({fallback.source_name}): {exc}")
 
         raise SourceError("; ".join(detail_lines) or "No Truth Social source succeeded.")
+
+    @staticmethod
+    def _exclude_retruths(posts: list[SourcePost]) -> list[SourcePost]:
+        return [post for post in posts if not post.is_reblog]

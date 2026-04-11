@@ -117,6 +117,56 @@ class ResilientTrumpSourceTests(unittest.TestCase):
         self.assertEqual(posts[0].id, "116372694697146221")
         self.assertEqual(posts[0].source_id, "truthsocial:realDonaldTrump")
 
+    def test_resilient_source_excludes_retruths_from_primary(self) -> None:
+        config = make_config()
+
+        class StaticPrimary:
+            source_id = "truthsocial:realDonaldTrump"
+            source_name = "Truth Social"
+
+            def fetch_posts(self, since_id: str | None = None, limit: int | None = None) -> list[SourcePost]:
+                return [
+                    SourcePost(
+                        source_id="truthsocial:realDonaldTrump",
+                        source_name="Truth Social",
+                        id="201",
+                        account_handle="realDonaldTrump",
+                        created_at="2026-04-09T08:00:00Z",
+                        url="https://truthsocial.com/@realDonaldTrump/posts/201",
+                        body_text="Retruthed text",
+                        is_reply=False,
+                        is_reblog=True,
+                        media_attachments=(),
+                        raw_payload={"id": "201"},
+                    ),
+                    SourcePost(
+                        source_id="truthsocial:realDonaldTrump",
+                        source_name="Truth Social",
+                        id="202",
+                        account_handle="realDonaldTrump",
+                        created_at="2026-04-09T08:01:00Z",
+                        url="https://truthsocial.com/@realDonaldTrump/posts/202",
+                        body_text="Original trump post",
+                        is_reply=False,
+                        is_reblog=False,
+                        media_attachments=(),
+                        raw_payload={"id": "202"},
+                    ),
+                ]
+
+            def probe(self):
+                raise SourceError("unused")
+
+        source = ResilientTrumpSource(
+            config,
+            primary=StaticPrimary(),  # type: ignore[arg-type]
+            fallbacks=(),
+        )
+
+        posts = source.fetch_posts(limit=10)
+
+        self.assertEqual([post.id for post in posts], ["202"])
+
     def test_fallback_prefers_original_fields_from_feed_payload(self) -> None:
         config = make_config()
         fallback_post = SourcePost(
