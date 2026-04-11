@@ -1155,7 +1155,7 @@ class ServiceTests(unittest.TestCase):
     def test_format_post_message_for_x_story_includes_time_without_link(self) -> None:
         post = SourcePost(
             source_id="x:kobeissiletter",
-            source_name="X | Kobeissi Letter",
+            source_name="The Kobeissi Letter",
             id="story-x-1",
             account_handle="KobeissiLetter",
             created_at="2026-04-11T08:15:00Z",
@@ -1172,7 +1172,11 @@ class ServiceTests(unittest.TestCase):
             translated_text="Thi truong tang sau du lieu lam phat moi.",
         )
 
-        self.assertTrue(message.startswith("X | Kobeissi Letter"))
+        self.assertTrue(message.startswith("The Kobeissi Letter"))
+        self.assertIn(
+            "The Kobeissi Letter\nPosted: 15:15 11/04/2026",
+            message,
+        )
         self.assertIn("Posted: 15:15 11/04/2026", message)
         self.assertNotIn("Link:", message)
         self.assertIn("Thi truong tang sau du lieu lam phat moi.", message)

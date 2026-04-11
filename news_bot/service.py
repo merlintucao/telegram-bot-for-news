@@ -47,7 +47,7 @@ def _format_header(post: SourcePost) -> str:
     if post.source_id == "rss:ft":
         return "FT"
     if post.source_id == "x:kobeissiletter":
-        return "X | Kobeissi Letter"
+        return "The Kobeissi Letter"
 
     if post.source_id.startswith("rss:"):
         kind = "story"
@@ -685,7 +685,7 @@ def format_post_message(
     lines = [_format_header(post)]
 
     if post.created_at and post.source_id != "rss:ft":
-        if post.source_id == "truthsocial:realDonaldTrump":
+        if post.source_id in {"truthsocial:realDonaldTrump", "x:kobeissiletter"}:
             lines.append(f"Posted: {_format_posted_at(post.created_at)}")
         else:
             lines.extend(["", f"Posted: {_format_posted_at(post.created_at)}"])
@@ -715,7 +715,7 @@ def format_post_caption(
     if post.source_id == "rss:reuters" and post.url:
         info_lines.append(f"Link: {post.url}")
     if info_lines:
-        if post.source_id == "truthsocial:realDonaldTrump":
+        if post.source_id in {"truthsocial:realDonaldTrump", "x:kobeissiletter"}:
             lines.extend(info_lines)
         else:
             lines.extend(["", *info_lines])
