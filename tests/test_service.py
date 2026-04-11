@@ -13,7 +13,12 @@ from news_bot.filtering import build_post_filter
 from news_bot.image_summary import ImageSummaryError
 from news_bot.models import MediaAttachment, SourcePost
 from news_bot.routing import build_router
-from news_bot.service import NewsBotService, format_post_caption, format_post_message
+from news_bot.service import (
+    NewsBotService,
+    _summarize_caption,
+    format_post_caption,
+    format_post_message,
+)
 from news_bot.source_types import SourceError
 from news_bot.storage import StateStore
 from news_bot.translate import TranslationError
@@ -342,7 +347,7 @@ class ServiceTests(unittest.TestCase):
 
         message = format_post_message(post)
 
-        self.assertIn("The post includes 1 image.", message)
+        self.assertNotIn("Bai dang kem 1 hinh anh.", message)
         self.assertNotIn("https://cdn.example.com/a.jpg", message)
 
     def test_format_post_message_uses_attachment_descriptions_for_media_summary(self) -> None:
@@ -446,7 +451,7 @@ class ServiceTests(unittest.TestCase):
                 [["https://cdn.example.com/a-preview.jpg"]],
             )
             self.assertIn("Hinh anh cho thay: Buc anh cho thay chan dung co quoc ky My.", sender.messages[0])
-            self.assertNotIn("The post includes 1 image.", sender.messages[0])
+            self.assertNotIn("Bai dang kem 1 hinh anh.", sender.messages[0])
 
     def test_video_does_not_use_image_summarizer(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -515,7 +520,7 @@ class ServiceTests(unittest.TestCase):
 
             self.assertEqual(summary.sent_count, 1)
             self.assertEqual(image_summarizer.calls, [])
-            self.assertIn("Bai dang co kem video hoac tep media.", sender.messages[0])
+            self.assertNotIn("Bai dang co kem video hoac tep media.", sender.messages[0])
 
     def test_format_post_message_summarizes_link_context(self) -> None:
         post = make_post(
@@ -550,7 +555,8 @@ class ServiceTests(unittest.TestCase):
         )
 
         self.assertIn("Ông Donald Trump cho biết Một ngày trọng đại cho hòa bình thế giới.", message)
-        self.assertIn("Ông cũng nói Iran muốn điều đó xảy ra, họ đã chịu đủ rồi.", message)
+        self.assertIn("Iran muốn điều đó xảy ra, họ đã chịu đủ rồi.", message)
+        self.assertNotIn("Ông cũng nói", message)
         self.assertIn("Ông nhấn mạnh Hoa Kỳ sẽ hỗ trợ tình trạng ùn tắc giao thông tại eo biển Hormuz.", message)
         self.assertNotIn("Iran có thể bắt đầu quá trình tái thiết.", message)
 
@@ -573,7 +579,8 @@ class ServiceTests(unittest.TestCase):
         )
 
         self.assertIn("Ông Donald Trump cho biết Cả một nền văn minh sẽ chết tối nay, không bao giờ có thể quay trở lại được nữa.", message)
-        self.assertIn("Ông cũng nói giờ đây khi đã có thay đổi chế độ hoàn toàn", message)
+        self.assertIn("giờ đây khi đã có thay đổi chế độ hoàn toàn", message)
+        self.assertNotIn("Ông cũng nói", message)
 
     def test_format_post_message_keeps_action_threat_and_terms_for_military_post(self) -> None:
         post = make_post(
@@ -663,6 +670,27 @@ class ServiceTests(unittest.TestCase):
 
         self.assertIn('Big Beautiful Bill', message)
         self.assertNotIn('cái gọi là và', message)
+
+    def test_format_post_message_does_not_end_with_broken_trump_fragment(self) -> None:
+        post = make_post(
+            "116382331013274742",
+            (
+                "I just met with Senators Lindsey Graham and John Barrasso to discuss funding our great ICE Agents and Border Patrol. "
+                "Reconciliation is MOVING ALONG, and we are moving QUICKLY and FOCUSED on keeping our Border SAFE, while getting funding for B."
+            ),
+        )
+
+        message = format_post_message(
+            post,
+            translated_text=(
+                "Tôi vừa gặp Thượng nghị sĩ Lindsey Graham và John Barrasso để nói về việc tài trợ cho các Đặc vụ ICE vĩ đại và Đội tuần tra Biên giới của chúng ta. "
+                "Quá trình hòa giải đang tiến hành, và chúng ta đang tiến hành nhanh chóng và tập trung vào việc giữ an toàn cho biên giới, đồng thời nhận tài trợ cho B."
+            ),
+        )
+
+        self.assertNotIn("Ông cũng nói", message)
+        self.assertNotIn("đồng thời nhận tài trợ cho B.", message)
+        self.assertFalse(message.rstrip().endswith(" B."))
 
     def test_translation_is_applied_before_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -838,7 +866,7 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(summary.sent_count, 1)
             self.assertIn("Ban dich tam thoi chua san sang.", sender.messages[0])
             self.assertIn("Bai dang co kem lien ket lien quan.", sender.messages[0])
-            self.assertIn("Bai dang co kem hinh anh lien quan.", sender.messages[0])
+            self.assertNotIn("Bai dang co kem hinh anh lien quan.", sender.messages[0])
             self.assertNotIn("hello world", sender.messages[0])
             self.assertNotIn("The post includes 1 image.", sender.messages[0])
 
@@ -1123,6 +1151,62 @@ class ServiceTests(unittest.TestCase):
             "Chứng khoán tăng nhờ kỳ vọng ngừng bắn sau khi các cuộc không kích của Israel đe dọa làm chệch hướng các cuộc đàm phán hòa bình.",
             message,
         )
+
+    def test_format_post_message_for_x_story_includes_time_without_link(self) -> None:
+        post = SourcePost(
+            source_id="x:kobeissiletter",
+            source_name="X | Kobeissi Letter",
+            id="story-x-1",
+            account_handle="KobeissiLetter",
+            created_at="2026-04-11T08:15:00Z",
+            url="https://x.com/KobeissiLetter/status/123",
+            body_text="Markets are rallying after a key inflation print.",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-x-1", "text": "Markets are rallying after a key inflation print."},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="Thi truong tang sau du lieu lam phat moi.",
+        )
+
+        self.assertTrue(message.startswith("X | Kobeissi Letter"))
+        self.assertIn("Posted: 15:15 11/04/2026", message)
+        self.assertNotIn("Link:", message)
+        self.assertIn("Thi truong tang sau du lieu lam phat moi.", message)
+
+    def test_summarize_caption_for_x_keeps_supporting_fact_without_prefix(self) -> None:
+        text = (
+            "Gold is reshaping the global financial system: Central bank gold holdings surpassed "
+            "valuation-adjusted US Dollar reserve assets for the first time on record. "
+            "Official gold reserve assets are up to a record $3.87 trillion, about $140 billion "
+            "above valuation-adjusted US Dollar reserve assets at $3.73 trillion. "
+            "Since 2022, gold reserve assets have tripled while USD reserve assets have declined."
+        )
+
+        summary = _summarize_caption(
+            text,
+            limit=260,
+            source_id="x:kobeissiletter",
+            max_sentences=3,
+        )
+
+        self.assertIn("Central bank gold holdings surpassed valuation-adjusted US Dollar reserve assets", summary)
+        self.assertIn("$3.87 trillion", summary)
+        self.assertNotIn("Kobeissi Letter cho biết", summary)
+
+    def test_summarize_caption_for_x_strips_breaking_prefix(self) -> None:
+        summary = _summarize_caption(
+            "BREAKING: Iran is struggling to fully reopen the Strait of Hormuz.",
+            limit=160,
+            source_id="x:kobeissiletter",
+            max_sentences=2,
+        )
+
+        self.assertNotIn("BREAKING:", summary)
+        self.assertTrue(summary.startswith("Iran is struggling"))
 
     def test_source_routes_can_override_and_broadcast(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

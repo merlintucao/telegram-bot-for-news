@@ -8,6 +8,7 @@ from .source_types import SourceAdapter
 from .rss import RSSFeedSource
 from .trump_source import ResilientTrumpSource, TrumpFallbackFeedSource
 from .truthsocial import TruthSocialClient
+from .x import XKobeissiLetterSource
 
 
 def build_sources(config: AppConfig) -> list[SourceAdapter]:
@@ -64,8 +65,13 @@ def build_sources(config: AppConfig) -> list[SourceAdapter]:
             seen.add(normalized)
             continue
 
+        if normalized == "x_kobeissi_letter":
+            sources.append(XKobeissiLetterSource(config))
+            seen.add(normalized)
+            continue
+
         raise ValueError(
-            f"Unsupported source '{source_name}'. Supported values: truthsocial_trump, rss, reuters_rss, ap_world_rss, ft_rss"
+            f"Unsupported source '{source_name}'. Supported values: truthsocial_trump, rss, reuters_rss, ap_world_rss, ft_rss, x_kobeissi_letter"
         )
 
     return sources

@@ -160,6 +160,45 @@ class CLITests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("required in cookies mode", output.getvalue())
 
+    def test_run_doctor_reports_x_cookie_requirements(self) -> None:
+        config = make_config()
+        config = AppConfig(
+            telegram_bot_token=config.telegram_bot_token,
+            telegram_chat_id=config.telegram_chat_id,
+            source_chat_routes=config.source_chat_routes,
+            source_keyword_filters=config.source_keyword_filters,
+            source_category_filters=config.source_category_filters,
+            enabled_sources=("x_kobeissi_letter",),
+            rss_feed_urls=config.rss_feed_urls,
+            truthsocial_fallback_feed_urls=config.truthsocial_fallback_feed_urls,
+            truthsocial_handle=config.truthsocial_handle,
+            truthsocial_account_id=config.truthsocial_account_id,
+            truthsocial_base_url=config.truthsocial_base_url,
+            truthsocial_cookies_file=config.truthsocial_cookies_file,
+            truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+            poll_interval_seconds=config.poll_interval_seconds,
+            request_timeout_seconds=config.request_timeout_seconds,
+            state_db_path=config.state_db_path,
+            bootstrap_latest_only=config.bootstrap_latest_only,
+            initial_history_limit=config.initial_history_limit,
+            fetch_limit=config.fetch_limit,
+            exclude_replies=config.exclude_replies,
+            exclude_reblogs=config.exclude_reblogs,
+            user_agent=config.user_agent,
+            log_level=config.log_level,
+            telegram_alert_chat_id=config.telegram_alert_chat_id,
+            x_auth_mode="cookies",
+            x_cookies_file=None,
+        )
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            exit_code = run_doctor(config, skip_network=True)
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("X auth mode: cookies", output.getvalue())
+        self.assertIn("X cookies: missing (required in cookies mode)", output.getvalue())
+
     def test_build_notify_message_uses_custom_text_when_present(self) -> None:
         self.assertEqual(
             build_notify_message("main", "custom ping"),

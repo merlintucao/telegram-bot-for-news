@@ -15,6 +15,7 @@ DEFAULT_REUTERS_RSS_URL = (
 )
 DEFAULT_AP_WORLD_RSS_URL = "https://rss.noleron.com/apnews/topics/world-news"
 DEFAULT_FT_RSS_URL = "https://www.ft.com/rss/home/international"
+DEFAULT_X_KOBEISSI_URL = "https://x.com/KobeissiLetter"
 
 
 def _strip_quotes(value: str) -> str:
@@ -76,6 +77,20 @@ def _normalize_truthsocial_auth_mode(value: str | None) -> str:
     return "auto"
 
 
+def _normalize_x_auth_mode(value: str | None) -> str:
+    normalized = (value or "cookies").strip().lower()
+    if normalized in {"auto", "cookies", "profile"}:
+        return normalized
+    return "cookies"
+
+
+def _normalize_x_backend(value: str | None) -> str:
+    normalized = (value or "twscrape").strip().lower()
+    if normalized in {"twscrape", "playwright"}:
+        return normalized
+    return "twscrape"
+
+
 def _default_truthsocial_account_id(handle: str) -> str | None:
     return KNOWN_TRUTHSOCIAL_ACCOUNT_IDS.get(handle.strip().lower()) or None
 
@@ -124,6 +139,15 @@ class AppConfig:
     reuters_rss_url: str = DEFAULT_REUTERS_RSS_URL
     ap_world_rss_url: str = DEFAULT_AP_WORLD_RSS_URL
     ft_rss_url: str = DEFAULT_FT_RSS_URL
+    x_kobeissi_url: str = DEFAULT_X_KOBEISSI_URL
+    x_backend: str = "twscrape"
+    x_auth_mode: str = "cookies"
+    x_cookies_file: Path | None = None
+    x_profile_dir: Path | None = None
+    x_poll_limit: int = 20
+    x_headless: bool = True
+    x_twscrape_db_path: Path = Path("data/x_accounts.db")
+    x_twscrape_account_username: str = "x_session"
 
     @classmethod
     def from_env(cls, env_file: str = ".env") -> "AppConfig":
@@ -138,6 +162,10 @@ class AppConfig:
         truthsocial_auth_mode = _normalize_truthsocial_auth_mode(
             os.getenv("TRUTHSOCIAL_AUTH_MODE")
         )
+        x_backend = _normalize_x_backend(os.getenv("X_BACKEND"))
+        x_auth_mode = _normalize_x_auth_mode(os.getenv("X_AUTH_MODE"))
+        x_cookies_value = os.getenv("X_COOKIES_FILE", "").strip()
+        x_profile_value = os.getenv("X_PROFILE_DIR", "").strip()
 
         return cls(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
@@ -208,4 +236,19 @@ class AppConfig:
             or DEFAULT_AP_WORLD_RSS_URL,
             ft_rss_url=os.getenv("FT_RSS_URL", DEFAULT_FT_RSS_URL).strip()
             or DEFAULT_FT_RSS_URL,
+            x_kobeissi_url=os.getenv("X_KOBEISSI_URL", DEFAULT_X_KOBEISSI_URL).strip()
+            or DEFAULT_X_KOBEISSI_URL,
+            x_backend=x_backend,
+            x_auth_mode=x_auth_mode,
+            x_cookies_file=Path(x_cookies_value) if x_cookies_value else None,
+            x_profile_dir=Path(x_profile_value) if x_profile_value else None,
+            x_poll_limit=max(1, _get_int("X_POLL_LIMIT", 20)),
+            x_headless=_get_bool("X_HEADLESS", True),
+            x_twscrape_db_path=Path(
+                os.getenv("X_TWSCRAPE_DB_PATH", "data/x_accounts.db")
+            ),
+            x_twscrape_account_username=(
+                os.getenv("X_TWSCRAPE_ACCOUNT_USERNAME", "x_session").strip()
+                or "x_session"
+            ),
         )

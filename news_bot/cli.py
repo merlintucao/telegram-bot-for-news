@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from .ap import APWorldRSSSource
 from .config import AppConfig
@@ -18,6 +18,7 @@ from .storage import StateStore
 from .source_types import SourceError
 from .sources import build_sources
 from .telegram import TelegramError, TelegramSender
+from .x import XKobeissiLetterSource
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,8 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "command",
-        choices=("once", "run", "doctor", "status", "notify", "send-latest-ap"),
-        help="Run one polling cycle, keep polling on an interval, inspect setup health, show saved bot status, send a Telegram test message, or send the latest AP story once.",
+        choices=("once", "run", "doctor", "status", "notify", "send-latest-ap", "test-x-twscrape"),
+        help="Run one polling cycle, keep polling on an interval, inspect setup health, show saved bot status, send a Telegram test message, send the latest AP story once, or smoke-test the twscrape X backend.",
     )
     parser.add_argument(
         "--dry-run",
@@ -115,6 +116,13 @@ def run_doctor(config: AppConfig, skip_network: bool) -> int:
         print(f"- AP World RSS url: {config.ap_world_rss_url}")
     if "ft_rss" in normalized_sources:
         print(f"- FT RSS url: {config.ft_rss_url}")
+    if "x_kobeissi_letter" in normalized_sources:
+        print(f"- X profile url: {config.x_kobeissi_url}")
+        print(f"- X backend: {config.x_backend}")
+        print(f"- X auth mode: {config.x_auth_mode}")
+        print(f"- X poll limit: {config.x_poll_limit}")
+        print("- X headless: " + ("enabled" if config.x_headless else "disabled"))
+        print(f"- X twscrape DB path: {config.x_twscrape_db_path}")
     if normalized_sources.intersection({"truthsocial", "truthsocial_trump"}):
         print(f"- Truth Social access mode: {config.truthsocial_auth_mode}")
         print(
@@ -175,6 +183,49 @@ def run_doctor(config: AppConfig, skip_network: bool) -> int:
                     print(f"- Truth Social cookies: failed to load ({exc})")
                     if cookies_required:
                         ok = False
+
+    if "x_kobeissi_letter" in normalized_sources:
+        if config.x_auth_mode == "profile":
+            if config.x_profile_dir is None:
+                print("- X profile: missing (required in profile mode)")
+                ok = False
+            elif not config.x_profile_dir.exists():
+                print(
+                    f"- X profile: missing directory at {config.x_profile_dir} "
+                    "(required in profile mode)"
+                )
+                ok = False
+            else:
+                print(f"- X profile: ready at {config.x_profile_dir}")
+        elif config.x_auth_mode == "cookies":
+            if config.x_cookies_file is None:
+                print("- X cookies: missing (required in cookies mode)")
+                ok = False
+            elif not config.x_cookies_file.exists():
+                print(
+                    f"- X cookies: missing file at {config.x_cookies_file} "
+                    "(required in cookies mode)"
+                )
+                ok = False
+            else:
+                try:
+                    jar = load_cookie_jar(config.x_cookies_file)
+                    cookies = list(jar)
+                    print(
+                        f"- X cookies: {len(cookies)} cookies loaded from "
+                        f"{config.x_cookies_file}"
+                    )
+                    if not cookies:
+                        ok = False
+                except Exception as exc:
+                    print(f"- X cookies: failed to load ({exc})")
+                    ok = False
+        else:
+            if config.x_profile_dir is None and config.x_cookies_file is None:
+                print("- X session: missing X_PROFILE_DIR or X_COOKIES_FILE")
+                ok = False
+            else:
+                print("- X session: ready")
 
     try:
         router = build_router(
@@ -471,6 +522,55 @@ def run_send_latest_ap(
     return 0
 
 
+def run_test_x_twscrape(config: AppConfig, *, dry_run: bool = False) -> int:
+    test_config = replace(config, x_backend="twscrape")
+    source = XKobeissiLetterSource(test_config)
+    try:
+        posts = source.fetch_posts(limit=5)
+    except SourceError as exc:
+        print(f"twscrape X test failed: {exc}")
+        return 1
+
+    if not posts:
+        print("twscrape X test returned no posts.")
+        return 1
+
+    print(
+        f"twscrape X test ok: fetched {len(posts)} post(s), "
+        f"latest={posts[0].id}"
+    )
+    for post in posts[:3]:
+        print(f"- {post.id} {post.url}")
+        if dry_run:
+            service = NewsBotService(
+                test_config,
+                StateStore(test_config.state_db_path),
+                [source],
+                build_router(test_config.telegram_chat_id, test_config.source_chat_routes),
+                build_post_filter(
+                    test_config.source_keyword_filters,
+                    test_config.source_category_filters,
+                ),
+                TelegramSender(
+                    bot_token=test_config.telegram_bot_token,
+                    chat_id=test_config.telegram_chat_id,
+                    timeout_seconds=test_config.request_timeout_seconds,
+                ),
+                translator=_build_translator(test_config),
+            )
+            translated_text = service._translate_post(post)
+            translated_auxiliary_lines = service._translate_auxiliary_summary_lines(post)
+            print(
+                format_post_message(
+                    post,
+                    translated_text=translated_text,
+                    translated_auxiliary_lines=translated_auxiliary_lines,
+                )
+            )
+            print()
+    return 0
+
+
 def run_command(
     config: AppConfig,
     command: str,
@@ -495,6 +595,8 @@ def run_command(
         )
     if command == "send-latest-ap":
         return run_send_latest_ap(config, dry_run=dry_run)
+    if command == "test-x-twscrape":
+        return run_test_x_twscrape(config, dry_run=dry_run)
 
     service = NewsBotService.from_config(config, dry_run=dry_run)
     continuous = command == "run"

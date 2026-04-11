@@ -46,6 +46,8 @@ def _format_header(post: SourcePost) -> str:
         return "AP News"
     if post.source_id == "rss:ft":
         return "FT"
+    if post.source_id == "x:kobeissiletter":
+        return "X | Kobeissi Letter"
 
     if post.source_id.startswith("rss:"):
         kind = "story"
@@ -121,11 +123,24 @@ def _truncate_sentence(text: str, limit: int) -> str:
     cleaned = _normalize_spaces(text)
     if len(cleaned) <= limit:
         return cleaned
-    return cleaned[: limit - 3].rstrip(" ,;:-") + "..."
+    cutoff = max(1, limit - 3)
+    candidate = cleaned[:cutoff]
+    word_safe = re.sub(r"\s+\S*$", "", candidate).rstrip(" ,;:-")
+    if len(word_safe) >= max(20, cutoff // 2):
+        return word_safe + "..."
+    return candidate.rstrip(" ,;:-") + "..."
 
 
 def _drop_terminal_punctuation(text: str) -> str:
     return text.rstrip(" .!?:;")
+
+
+def _clean_x_summary_text(text: str) -> str:
+    cleaned = _normalize_spaces(_drop_terminal_punctuation(text))
+    cleaned = re.sub(r"^\s*(Quoted context|Quoted post)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\s*(BREAKING|UPDATE|NEW|ALERT)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\s*(BREAKING|UPDATE|NEW|ALERT)\b[\s,-]*", "", cleaned, flags=re.IGNORECASE)
+    return cleaned
 
 
 def _clean_trump_summary_text(text: str) -> str:
@@ -139,6 +154,7 @@ def _clean_trump_summary_text(text: str) -> str:
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(r"\b(KẾ HOẠCH|KẾ HOẠCH MƯỜI ĐIỂM|GIẢ MẠO|TRÒ LỪA BỊP)\b", "", cleaned)
+    cleaned = re.sub(r"(?:\s+|^)[A-Z]\.?$", "", cleaned).strip(" ,")
     return _normalize_spaces(cleaned.strip(" ,"))
 
 
@@ -164,6 +180,55 @@ def _neutral_support_clause(text: str) -> str:
     cleaned = re.sub(r"^\s*Tôi\s+", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^\s*Chúng tôi\s+", "", cleaned, flags=re.IGNORECASE)
     return _normalize_spaces(cleaned)
+
+
+def _rewrite_x_summary_vi(sentences: list[str], limit: int) -> str:
+    cleaned_sentences: list[str] = []
+    for sentence in sentences:
+        cleaned = _clean_x_summary_text(sentence)
+        if cleaned:
+            cleaned_sentences.append(cleaned)
+    if not cleaned_sentences:
+        return ""
+
+    lead = cleaned_sentences[0]
+    lead_sentence = lead if lead.endswith((".", "!", "?")) else f"{lead}."
+    if len(cleaned_sentences) == 1:
+        return _truncate_sentence(lead_sentence, limit)
+
+    def support_score(text: str) -> tuple[int, int]:
+        lowered = text.lower()
+        score = 0
+        if re.search(r"\b\d+(?:[.,]\d+)?\b", text):
+            score += 3
+        if any(token in lowered for token in ("$", "%", "tỷ", "nghìn tỷ", "triệu", "billion", "trillion", "million")):
+            score += 3
+        if any(token in lowered for token in ("lần đầu", "kể từ", "tăng", "giảm", "cao nhất", "thấp nhất", "vượt", "cao hơn", "thấp hơn", "since ", "first time", "rose", "fell", "record")):
+            score += 2
+        if len(text) >= 60:
+            score += 1
+        return (score, len(text))
+
+    support_candidates = [
+        sentence
+        for sentence in cleaned_sentences[1:]
+        if _normalize_spaces(sentence).casefold() != _normalize_spaces(lead).casefold()
+    ]
+    support = max(support_candidates, key=support_score, default="")
+
+    parts = [lead_sentence]
+    if support:
+        support_sentence = support if support.endswith((".", "!", "?")) else f"{support}."
+        projected = " ".join(parts + [support_sentence]).strip()
+        if len(projected) <= limit:
+            parts.append(support_sentence)
+        elif support_score(support)[0] >= 3:
+            trimmed_support = _truncate_sentence(support_sentence, max(40, limit - len(lead_sentence) - 1))
+            projected = " ".join(parts + [trimmed_support]).strip()
+            if len(projected) <= limit:
+                parts.append(trimmed_support)
+
+    return _truncate_sentence(" ".join(parts), limit)
 
 @dataclass(slots=True)
 class TrumpFactSlots:
@@ -331,7 +396,7 @@ def _prefixed_trump_sentence(clause: str, limit: int) -> str:
     elif any(marker in lowered for marker in ("không có vũ khí hạt nhân", "eo biển hormuz", "thỏa thuận", "điều khoản")):
         sentence = f"Ông nhấn mạnh {compact}."
     else:
-        sentence = f"Ông cũng nói {compact}."
+        sentence = f"{compact}."
     return _truncate_sentence(sentence, limit)
 
 
@@ -458,6 +523,8 @@ def _summarize_caption(
         return _truncate_sentence(cleaned, limit)
     if source_id == "truthsocial:realDonaldTrump":
         return _rewrite_trump_summary_vi(compact_sentences, limit)
+    if source_id == "x:kobeissiletter":
+        return _rewrite_x_summary_vi(compact_sentences, limit)
     return " ".join(compact_sentences)
 
 
@@ -540,21 +607,7 @@ def _summarize_media_attachments(
             label = _media_label(kind)
             lines.append(f"{label}: {_truncate_sentence(description, limit)}")
         return lines
-
-    counts: dict[str, int] = {}
-    for attachment in attachments:
-        label = _media_count_label(attachment.kind)
-        counts[label] = counts.get(label, 0) + 1
-
-    parts = []
-    for label, count in counts.items():
-        suffix = "" if count == 1 else "s"
-        parts.append(f"{count} {label}{suffix}")
-    if len(parts) == 1:
-        return [f"The post includes {parts[0]}."]
-    if len(parts) == 2:
-        return [f"The post includes {parts[0]} and {parts[1]}."]
-    return [f"The post includes {', '.join(parts[:-1])}, and {parts[-1]}."]
+    return []
 
 
 def _media_count_label(kind: str) -> str:
@@ -563,6 +616,17 @@ def _media_count_label(kind: str) -> str:
         return "image"
     if normalized in {"video", "gif", "gifv"}:
         return "video"
+    return normalized
+
+
+def _media_count_label_vi(label: str, count: int) -> str:
+    normalized = label.strip().lower() or "media"
+    if normalized == "image":
+        return "hinh anh"
+    if normalized == "video":
+        return "video"
+    if count > 1 and not normalized.endswith("s"):
+        return f"{normalized}s"
     return normalized
 
 
@@ -597,10 +661,11 @@ def _build_summary_lines(
         limit=(
             360
             if post.source_id == "truthsocial:realDonaldTrump"
+            else 220 if post.source_id == "x:kobeissiletter"
             else 200 if post.source_id in WIRE_STORY_SOURCE_IDS else 220
         ),
         source_id=post.source_id,
-        max_sentences=2 if post.source_id in WIRE_STORY_SOURCE_IDS else 3,
+        max_sentences=2 if post.source_id in WIRE_STORY_SOURCE_IDS or post.source_id == "x:kobeissiletter" else 3,
     )
     if caption_summary:
         summary_lines.append(caption_summary)
