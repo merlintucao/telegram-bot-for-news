@@ -5,6 +5,7 @@ import email.utils
 import json
 import logging
 import re
+import sqlite3
 from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Any
@@ -457,6 +458,7 @@ class XKobeissiLetterSource:
 
         try:
             from twscrape import API
+            from twscrape.accounts_pool import parse_cookies
             from twscrape.utils import encode_params
         except ImportError as exc:  # pragma: no cover - depends on environment
             raise SourceError(
@@ -477,13 +479,10 @@ class XKobeissiLetterSource:
         async def _run() -> list[dict[str, Any]]:
             from functools import reduce
 
-            db_file = Path(self.config.x_twscrape_db_path)
-            db_file.parent.mkdir(parents=True, exist_ok=True)
-            if db_file.exists():
-                db_file.unlink()
+            db_file = self._prepare_twscrape_db_file()
             db_path = str(db_file)
             api = API(db_path, raise_when_no_account=True)
-            await self._ensure_twscrape_account(api)
+            await self._ensure_twscrape_account(api, parse_cookies=parse_cookies)
 
             home_page_text = await get_tw_page_text(self.profile_url)
             soup = bs4.BeautifulSoup(home_page_text, "html.parser")
@@ -591,7 +590,28 @@ class XKobeissiLetterSource:
                 f"Failed to read X timeline via twscrape for {self.profile_url}: {exc}"
             ) from exc
 
-    async def _ensure_twscrape_account(self, api: Any) -> None:
+    def _prepare_twscrape_db_file(self) -> Path:
+        db_file = Path(self.config.x_twscrape_db_path)
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+        # Reset clearly broken DBs, but preserve healthy shared state across polls.
+        if db_file.exists():
+            should_reset = False
+            if db_file.stat().st_size == 0:
+                should_reset = True
+            else:
+                try:
+                    with sqlite3.connect(db_file) as connection:
+                        row = connection.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'"
+                        ).fetchone()
+                    should_reset = row is None
+                except sqlite3.Error:
+                    should_reset = True
+            if should_reset:
+                db_file.unlink()
+        return db_file
+
+    async def _ensure_twscrape_account(self, api: Any, parse_cookies: Any | None = None) -> None:
         if self.config.x_cookies_file is None:
             raise SourceError("X_COOKIES_FILE is required when X_BACKEND=twscrape.")
 
@@ -604,15 +624,28 @@ class XKobeissiLetterSource:
             )
 
         username = self.config.x_twscrape_account_username
-        await api.pool.delete_accounts(username)
-        await api.pool.add_account(
-            username=username,
-            password="unused",
-            email="unused@example.com",
-            email_password="unused",
-            user_agent=self.config.user_agent,
-            cookies=_cookie_jar_to_twscrape_cookies(jar),
+        cookies_json = _cookie_jar_to_twscrape_cookies(jar)
+        account = await api.pool.get_account(username)
+        if account is None:
+            await api.pool.add_account(
+                username=username,
+                password="unused",
+                email="unused@example.com",
+                email_password="unused",
+                user_agent=self.config.user_agent,
+                cookies=cookies_json,
+            )
+            return
+
+        account.user_agent = self.config.user_agent
+        account.cookies = (
+            parse_cookies(cookies_json) if parse_cookies is not None else json.loads(cookies_json)
         )
+        account.active = "ct0" in account.cookies
+        account.locks = {}
+        account.last_used = None
+        account.error_msg = None
+        await api.pool.save(account)
 
     def _fetch_timeline_items_playwright(self, max_items: int) -> list[dict[str, Any]]:
         try:
