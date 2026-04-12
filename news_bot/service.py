@@ -738,7 +738,7 @@ def _summarize_links(post: SourcePost, limit: int = 120) -> list[str]:
         if described:
             continue
         domain = urlparse(url).netloc.replace("www.", "")
-        if domain:
+        if domain and domain.casefold() != "t.co":
             lines.append(f"Link summary: Link to {domain}")
 
     deduped: list[str] = []

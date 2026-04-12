@@ -533,6 +533,28 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("Ông Donald Trump cho biết Two more major pharmaceutical companies to launch products through TrumpRx.", message)
         self.assertIn("Link summary: Two more major pharmaceutical companies to launch products through TrumpRx:", message)
 
+    def test_format_post_message_skips_tco_fallback_link_summary(self) -> None:
+        post = SourcePost(
+            source_id="x:kobeissiletter",
+            source_name="The Kobeissi Letter",
+            id="story-x-tco-1",
+            account_handle="KobeissiLetter",
+            created_at="2026-04-12T02:39:00Z",
+            url="https://x.com/KobeissiLetter/status/999",
+            body_text="Bitcoin is dropping sharply after US-Iran talks failed. https://t.co/example",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-x-tco-1", "text": "Bitcoin is dropping sharply after US-Iran talks failed. https://t.co/example"},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="Bitcoin giảm mạnh do các cuộc đàm phán Mỹ-Iran thất bại.",
+        )
+
+        self.assertNotIn("Link summary: Link to t.co", message)
+
     def test_format_post_message_keeps_multiple_sentences_for_long_story(self) -> None:
         post = make_post(
             "101",
