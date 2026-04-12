@@ -531,7 +531,11 @@ class ServiceTests(unittest.TestCase):
         message = format_post_message(post)
 
         self.assertIn("Ông Donald Trump cho biết Two more major pharmaceutical companies to launch products through TrumpRx.", message)
-        self.assertIn("Link summary: Two more major pharmaceutical companies to launch products through TrumpRx:", message)
+        self.assertIn(
+            "Ông Donald Trump cho biết Two more major pharmaceutical companies to launch products through TrumpRx.\n\n"
+            "Link summary: Two more major pharmaceutical companies to launch products through TrumpRx.",
+            message,
+        )
 
     def test_format_post_message_skips_tco_fallback_link_summary(self) -> None:
         post = SourcePost(
@@ -1209,6 +1213,31 @@ class ServiceTests(unittest.TestCase):
         )
         self.assertIn(
             "Chứng khoán tăng nhờ kỳ vọng ngừng bắn sau khi các cuộc không kích của Israel đe dọa làm chệch hướng các cuộc đàm phán hòa bình.",
+            message,
+        )
+
+    def test_format_post_message_for_ft_story_adds_terminal_period(self) -> None:
+        post = SourcePost(
+            source_id="rss:ft",
+            source_name="FT",
+            id="story-ft-2",
+            account_handle="FT",
+            created_at="2026-04-07T08:00:00Z",
+            url="https://www.ft.com/content/test-story-2",
+            body_text="Saudi Arabia and Qatar both suffer significant hits to production capacity in war",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-ft-2"},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="Ả Rập Saudi và Qatar đều bị thiệt hại đáng kể về năng lực sản xuất trong cuộc chiến Mỹ-Israel chống lại Iran",
+        )
+
+        self.assertIn(
+            "Ả Rập Saudi và Qatar đều bị thiệt hại đáng kể về năng lực sản xuất trong cuộc chiến Mỹ-Israel chống lại Iran.\n\nTheo FT",
             message,
         )
 

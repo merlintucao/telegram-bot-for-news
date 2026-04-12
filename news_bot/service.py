@@ -700,6 +700,14 @@ def _sentence_without_urls(text: str) -> str:
     return _normalize_spaces(URL_PATTERN.sub("", text))
 
 
+def _normalize_summary_tail(text: str) -> str:
+    cleaned = _normalize_spaces(text).rstrip()
+    cleaned = cleaned.rstrip(":;,-")
+    if cleaned and cleaned[-1] not in ".!?":
+        cleaned = f"{cleaned}."
+    return cleaned
+
+
 def _summarize_links(post: SourcePost, limit: int = 120) -> list[str]:
     lines: list[str] = []
     card = post.raw_payload.get("card")
@@ -710,7 +718,7 @@ def _summarize_links(post: SourcePost, limit: int = 120) -> list[str]:
             detail = title
             if description and description.casefold() != title.casefold():
                 detail = f"{title} - {_truncate_sentence(description, max(20, limit - len(title) - 3))}"
-            lines.append(f"Link summary: {_truncate_sentence(detail, limit)}")
+            lines.append(f"Link summary: {_normalize_summary_tail(_truncate_sentence(detail, limit))}")
 
     body_urls = []
     seen_urls: set[str] = set()
@@ -732,7 +740,9 @@ def _summarize_links(post: SourcePost, limit: int = 120) -> list[str]:
                 continue
             sentence_summary = _sentence_without_urls(sentence)
             if sentence_summary:
-                lines.append(f"Link summary: {_truncate_sentence(sentence_summary, limit)}")
+                lines.append(
+                    f"Link summary: {_normalize_summary_tail(_truncate_sentence(sentence_summary, limit))}"
+                )
                 described = True
                 break
         if described:
@@ -836,17 +846,22 @@ def _build_summary_lines(
         max_sentences=2 if post.source_id in WIRE_STORY_SOURCE_IDS or post.source_id == "x:kobeissiletter" else 3,
     )
     if caption_summary:
+        if post.source_id == "rss:ft":
+            caption_summary = _normalize_summary_tail(caption_summary)
         if post.source_id in ATTRIBUTED_WIRE_SOURCE_IDS:
             summary_lines.append(caption_summary)
             summary_lines.append("")
             summary_lines.append(_format_attribution(post))
         else:
             summary_lines.append(caption_summary)
-    summary_lines.extend(
+    auxiliary_lines = (
         _build_auxiliary_summary_lines(post)
         if translated_auxiliary_lines is None
         else translated_auxiliary_lines
     )
+    if caption_summary and auxiliary_lines and post.source_id not in ATTRIBUTED_WIRE_SOURCE_IDS:
+        summary_lines.append("")
+    summary_lines.extend(auxiliary_lines)
     return summary_lines
 
 
