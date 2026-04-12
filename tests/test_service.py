@@ -1522,6 +1522,29 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("Talks are expected to continue tonight and may extend into tomorrow", summary)
         self.assertNotIn("We expect to receive much more detail", summary)
 
+    def test_summarize_caption_for_x_weekly_list_keeps_later_items_and_tail(self) -> None:
+        summary = _summarize_caption(
+            (
+                "Key Events This Week:\n\n"
+                "1. Markets React to Failed Negotiations and Hormuz \"Blockade\" - Today, 6 PM ET\n\n"
+                "2. March Existing Home Sales data - Monday\n\n"
+                "3. March PPI Inflation data - Tuesday\n\n"
+                "4. Philly Fed Manufacturing Index - Thursday\n\n"
+                "5. Initial Jobless Claims data - Thursday\n\n"
+                "6. 10 Fed Speaker Events This Week\n\n"
+                "Today marks day 44 of the Iran War."
+            ),
+            limit=220,
+            source_id="x:kobeissiletter",
+            max_sentences=2,
+        )
+
+        self.assertIn("Markets React to Failed Negotiations", summary)
+        self.assertIn("March PPI Inflation data - Tuesday", summary)
+        self.assertIn("Initial Jobless Claims data - Thursday", summary)
+        self.assertIn("10 Fed Speaker Events This Week", summary)
+        self.assertIn("Today marks day 44 of the Iran War", summary)
+
     def test_source_routes_can_override_and_broadcast(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "state.sqlite3"

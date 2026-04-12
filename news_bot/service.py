@@ -157,6 +157,40 @@ def _is_meaningful_summary_text(text: str) -> bool:
     return True
 
 
+def _should_append_numbered_list_trailing_context(text: str) -> bool:
+    cleaned = _normalize_spaces(_drop_terminal_punctuation(text))
+    if not _is_meaningful_summary_text(cleaned):
+        return False
+    lowered = cleaned.casefold()
+    low_signal_patterns = (
+        "we expect to receive much more detail",
+        "more detail in the coming hours",
+        "more details in the coming hours",
+        "we will update",
+        "stay tuned",
+    )
+    if any(pattern in lowered for pattern in low_signal_patterns):
+        return False
+    if re.search(r"\b\d+(?:[.,]\d+)?\b", cleaned):
+        return True
+    factual_markers = (
+        "day ",
+        "today",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "week",
+        "month",
+        "year",
+        "war",
+    )
+    return any(marker in lowered for marker in factual_markers)
+
+
 def _clean_x_summary_text(text: str) -> str:
     cleaned = _normalize_spaces(_drop_terminal_punctuation(text))
     cleaned = re.sub(r"^\s*(Quoted context|Quoted post)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
@@ -187,7 +221,7 @@ def _merge_sentence_fragments(sentences: list[str]) -> list[str]:
     return merged
 
 
-def _extract_numbered_list_segments(text: str) -> tuple[str, list[str]] | None:
+def _extract_numbered_list_segments(text: str) -> tuple[str, list[str], str] | None:
     source = URL_PATTERN.sub("", text).strip()
     if not source:
         return None
@@ -208,18 +242,22 @@ def _extract_numbered_list_segments(text: str) -> tuple[str, list[str]] | None:
 
     intro = source[: matches[0].start()].strip()
     items: list[str] = []
+    trailing_context = ""
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
         item = source[match.end() : end].strip()
         if multiline:
-            item = re.split(r"\n\s*\n", item, maxsplit=1)[0].strip()
+            item_parts = re.split(r"\n\s*\n", item, maxsplit=1)
+            item = item_parts[0].strip()
+            if index == len(matches) - 1 and len(item_parts) > 1:
+                trailing_context = item_parts[1].strip()
         cleaned_item = _clean_x_summary_text(item)
         if cleaned_item:
             items.append(cleaned_item)
 
     if not items:
         return None
-    return (intro, items)
+    return (intro, items, _clean_x_summary_text(trailing_context))
 
 
 def _clean_numbered_list_intro(text: str) -> str:
@@ -265,7 +303,7 @@ def _summarize_x_numbered_list(text: str, limit: int) -> str:
     if extracted is None:
         return ""
 
-    intro, items = extracted
+    intro, items, trailing_context = extracted
     lead = _clean_numbered_list_intro(intro)
     label = _list_label_for_x(intro)
     lead_sentence = ""
@@ -286,9 +324,18 @@ def _summarize_x_numbered_list(text: str, limit: int) -> str:
             detail_items = [_truncate_sentence(item, remaining)]
         break
 
+    trailing_sentence = ""
+    if trailing_context and _should_append_numbered_list_trailing_context(trailing_context):
+        candidate = f"{lead_sentence} {detail_prefix}{'; '.join(detail_items)}. {trailing_context}".strip()
+        if detail_items and len(candidate) <= limit:
+            trailing_sentence = trailing_context if trailing_context.endswith((".", "!", "?")) else f"{trailing_context}."
+
     if not detail_items:
         return _truncate_sentence(lead_sentence or f"{detail_prefix}{items[0]}.", limit)
-    return _truncate_sentence(f"{lead_sentence} {detail_prefix}{'; '.join(detail_items)}.".strip(), limit)
+    summary = f"{lead_sentence} {detail_prefix}{'; '.join(detail_items)}.".strip()
+    if trailing_sentence:
+        summary = f"{summary} {trailing_sentence}".strip()
+    return _truncate_sentence(summary, limit)
 
 
 def _summarize_trump_numbered_list(text: str, limit: int) -> str:
@@ -296,7 +343,7 @@ def _summarize_trump_numbered_list(text: str, limit: int) -> str:
     if extracted is None:
         return ""
 
-    intro, items = extracted
+    intro, items, _trailing_context = extracted
     intro_clean = _clean_trump_numbered_list_intro(intro)
     lead_sentence = ""
     if intro_clean:
@@ -712,7 +759,8 @@ def _summarize_caption(
     if not cleaned:
         return ""
     if source_id == "x:kobeissiletter":
-        list_summary = _summarize_x_numbered_list(text, limit)
+        list_limit = max(limit, min(660, max(limit * 3, 420)))
+        list_summary = _summarize_x_numbered_list(text, list_limit)
         if list_summary:
             return list_summary
     if source_id == "truthsocial:realDonaldTrump":
