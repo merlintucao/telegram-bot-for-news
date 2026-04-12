@@ -522,7 +522,7 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(image_summarizer.calls, [])
             self.assertNotIn("Bai dang co kem video hoac tep media.", sender.messages[0])
 
-    def test_format_post_message_summarizes_link_context(self) -> None:
+    def test_format_post_message_does_not_include_link_context(self) -> None:
         post = make_post(
             "101",
             "Two more major pharmaceutical companies to launch products through TrumpRx: https://justthenews.com/story",
@@ -531,11 +531,7 @@ class ServiceTests(unittest.TestCase):
         message = format_post_message(post)
 
         self.assertIn("Ông Donald Trump cho biết Two more major pharmaceutical companies to launch products through TrumpRx.", message)
-        self.assertIn(
-            "Ông Donald Trump cho biết Two more major pharmaceutical companies to launch products through TrumpRx.\n\n"
-            "Link summary: Two more major pharmaceutical companies to launch products through TrumpRx.",
-            message,
-        )
+        self.assertNotIn("Link summary:", message)
 
     def test_format_post_message_skips_tco_fallback_link_summary(self) -> None:
         post = SourcePost(
@@ -557,7 +553,7 @@ class ServiceTests(unittest.TestCase):
             translated_text="Bitcoin giảm mạnh do các cuộc đàm phán Mỹ-Iran thất bại.",
         )
 
-        self.assertNotIn("Link summary: Link to t.co", message)
+        self.assertNotIn("Link summary:", message)
 
     def test_format_post_message_skips_trivial_rt_summary_and_link(self) -> None:
         post = SourcePost(
@@ -585,6 +581,30 @@ class ServiceTests(unittest.TestCase):
         self.assertNotIn("Ông Donald Trump cho biết RT.", message)
         self.assertNotIn("Link summary: RT.", message)
 
+    def test_format_post_message_preserves_rt_pcr_term(self) -> None:
+        post = SourcePost(
+            source_id="truthsocial:realDonaldTrump",
+            source_name="Truth Social",
+            id="story-trump-rt-pcr-1",
+            account_handle="realDonaldTrump",
+            created_at="2026-04-12T12:53:12.256Z",
+            url="https://truthsocial.com/@realDonaldTrump/posts/116391830634836371",
+            body_text=(
+                "RT-PCR demand is rising as countries expand testing capacity."
+            ),
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-trump-rt-pcr-1"},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="RT-PCR tăng mạnh khi các quốc gia mở rộng năng lực xét nghiệm.",
+        )
+
+        self.assertIn("Ông Donald Trump cho biết RT-PCR tăng mạnh khi các quốc gia mở rộng năng lực xét nghiệm.", message)
+
     def test_format_post_message_uses_card_description_when_title_is_junk(self) -> None:
         post = SourcePost(
             source_id="truthsocial:realDonaldTrump",
@@ -611,10 +631,7 @@ class ServiceTests(unittest.TestCase):
             translated_text="RT",
         )
 
-        self.assertIn(
-            "Link summary: Trump signals a possible naval blockade if Iran refuses terms.",
-            message,
-        )
+        self.assertNotIn("Link summary:", message)
 
     def test_format_post_message_keeps_multiple_sentences_for_long_story(self) -> None:
         post = make_post(
@@ -1465,8 +1482,23 @@ class ServiceTests(unittest.TestCase):
         )
 
         self.assertIn("Giá trị tài sản ròng của hộ gia đình Hoa Kỳ đã tăng +2,2 nghìn tỷ USD", summary)
+        self.assertIn("184,1 nghìn tỷ USD", summary)
         self.assertNotIn("khi...", summary)
         self.assertNotIn("...", summary)
+
+    def test_summarize_caption_for_x_can_trim_non_material_trailing_clause(self) -> None:
+        summary = _summarize_caption(
+            (
+                "Lượng cổ phiếu nắm giữ của hộ gia đình Hoa Kỳ đã tăng mạnh trong quý 4 năm 2025, "
+                "khi thị trường tiếp tục đi lên và tâm lý nhà đầu tư được cải thiện."
+            ),
+            limit=100,
+            source_id="x:kobeissiletter",
+            max_sentences=1,
+        )
+
+        self.assertIn("Lượng cổ phiếu nắm giữ của hộ gia đình Hoa Kỳ đã tăng mạnh trong quý 4 năm 2025.", summary)
+        self.assertNotIn("khi thị trường", summary)
 
     def test_summarize_caption_for_x_numbered_lists_include_multiple_items(self) -> None:
         summary = _summarize_caption(
@@ -1820,6 +1852,54 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(summary.filtered_count, 1)
             self.assertEqual(sender.deliveries, [("@chat", "102")])
             self.assertEqual(store.get_last_status_id(client.source_id), "102")
+
+    def test_rt_prefixed_truthsocial_post_is_not_filtered_by_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=config.enabled_sources,
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_fallback_feed_urls=config.truthsocial_fallback_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+            )
+            store = StateStore(db_path)
+            client = FakeClient([[make_post("101", "RT: forwarded content")]])
+            sender = FakeSender()
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+            )
+
+            summary = service.run_once()
+
+            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(summary.filtered_count, 0)
+            self.assertEqual(sender.deliveries, [("@chat", "101")])
+            self.assertEqual(store.get_last_status_id(client.source_id), "101")
 
     def test_category_filter_matches_rss_categories(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -370,10 +370,21 @@ def _truncate_x_summary_sentence(text: str, limit: int) -> str:
         return cleaned
 
     core = _drop_terminal_punctuation(cleaned)
+    def tail_is_material(tail: str) -> bool:
+        lowered = tail.lower()
+        if re.search(r"\b\d+(?:[.,]\d+)?\b", tail):
+            return True
+        material_markers = (
+            "$", "%", "tỷ", "nghìn tỷ", "triệu", "million", "billion", "trillion",
+            "kỷ lục", "cao nhất", "thấp nhất", "lần đầu", "kể từ", "vượt", "cao hơn",
+            "thấp hơn", "record", "first time", "since ", "rose", "fell",
+        )
+        return any(marker in lowered for marker in material_markers)
+
     for separator in (",", ";", ":"):
-        head, found, _tail = core.partition(separator)
+        head, found, tail = core.partition(separator)
         head = head.strip()
-        if found and len(head) >= 40 and len(head) + 1 <= limit:
+        if found and len(head) >= 40 and len(head) + 1 <= limit and not tail_is_material(tail.strip()):
             return f"{head}."
 
     return _truncate_sentence(cleaned, limit)
@@ -726,7 +737,10 @@ def _summarize_caption(
         if projected > source_scan_limit and len(compact_sentences) >= 2:
             break
         if projected > source_scan_limit:
-            compact_sentences.append(_truncate_sentence(sentence, source_scan_limit))
+            if source_id == "x:kobeissiletter" and not compact_sentences:
+                compact_sentences.append(sentence)
+            else:
+                compact_sentences.append(_truncate_sentence(sentence, source_scan_limit))
             break
         compact_sentences.append(sentence)
         current_length = projected
@@ -872,7 +886,6 @@ def _is_image_attachment(attachment: MediaAttachment) -> bool:
 
 def _build_auxiliary_summary_lines(post: SourcePost) -> list[str]:
     lines: list[str] = []
-    lines.extend(_summarize_links(post))
     lines.extend(_summarize_media(post))
     return lines
 
@@ -1572,14 +1585,6 @@ class NewsBotService:
 
     def _build_auxiliary_summary_entries(self, post: SourcePost) -> list[AuxiliarySummaryEntry]:
         entries: list[AuxiliarySummaryEntry] = []
-        entries.extend(
-            AuxiliarySummaryEntry(
-                text=line,
-                placeholder="Bai dang co kem lien ket lien quan.",
-            )
-            for line in _summarize_links(post)
-        )
-
         image_summary = self._summarize_post_images(post)
         if image_summary:
             entries.append(
