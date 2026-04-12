@@ -148,6 +148,161 @@ def _clean_x_summary_text(text: str) -> str:
     return cleaned
 
 
+def _merge_sentence_fragments(sentences: list[str]) -> list[str]:
+    merged: list[str] = []
+    index = 0
+    while index < len(sentences):
+        current = sentences[index].strip()
+        if (
+            index + 1 < len(sentences)
+            and (
+                re.search(r":\s*\d+\.$", current)
+                or re.fullmatch(r"\d+\.", current)
+            )
+        ):
+            merged.append(f"{current} {sentences[index + 1].strip()}".strip())
+            index += 2
+            continue
+        merged.append(current)
+        index += 1
+    return merged
+
+
+def _extract_numbered_list_segments(text: str) -> tuple[str, list[str]] | None:
+    source = URL_PATTERN.sub("", text).strip()
+    if not source:
+        return None
+
+    multiline_matches = list(re.finditer(r"(?m)(?:^|\n)\s*(\d+)[.)]\s+", source))
+    if multiline_matches:
+        matches = multiline_matches
+        multiline = True
+    else:
+        normalized = _normalize_spaces(source)
+        matches = list(re.finditer(r"(?<!\d)(\d+)[.)]\s+", normalized))
+        if not matches:
+            return None
+        if len(matches) == 1 and ":" not in normalized[: matches[0].start()]:
+            return None
+        source = normalized
+        multiline = False
+
+    intro = source[: matches[0].start()].strip()
+    items: list[str] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
+        item = source[match.end() : end].strip()
+        if multiline:
+            item = re.split(r"\n\s*\n", item, maxsplit=1)[0].strip()
+        cleaned_item = _clean_x_summary_text(item)
+        if cleaned_item:
+            items.append(cleaned_item)
+
+    if not items:
+        return None
+    return (intro, items)
+
+
+def _clean_numbered_list_intro(text: str) -> str:
+    cleaned = _normalize_spaces(text)
+    cleaned = re.sub(
+        r"(?:^|[\s.])(?:Details include|Key details|Key points|Chi tiết(?: bao gồm| gồm)?|Các điểm chính)\s*:\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return _clean_x_summary_text(cleaned).strip(" :;-")
+
+
+def _clean_trump_numbered_list_intro(text: str) -> str:
+    cleaned = _normalize_spaces(text)
+    cleaned = re.sub(
+        r"(?:^|[\s.])(?:Details include|Key details|Key points|Chi tiết(?: bao gồm| gồm)?|Các điểm chính)\s*:\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"^\s*(BREAKING|UPDATE|NEW|ALERT|THÔNG TIN NÓNG)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\s*(BREAKING|UPDATE|NEW|ALERT|THÔNG TIN NÓNG)\b[\s,-]*", "", cleaned, flags=re.IGNORECASE)
+    return _clean_trump_summary_text(cleaned).strip(" :;-")
+
+
+def _list_label_for_x(intro: str) -> str:
+    normalized = _normalize_spaces(intro)
+    match = re.search(
+        r"(Details include|Key details|Key points|Chi tiết(?: bao gồm| gồm)?|Các điểm chính)\s*:\s*$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return match.group(1)
+    if _has_vietnamese_diacritics(normalized):
+        return "Các điểm chính"
+    return "Key details"
+
+
+def _summarize_x_numbered_list(text: str, limit: int) -> str:
+    extracted = _extract_numbered_list_segments(text)
+    if extracted is None:
+        return ""
+
+    intro, items = extracted
+    lead = _clean_numbered_list_intro(intro)
+    label = _list_label_for_x(intro)
+    lead_sentence = ""
+    if lead:
+        lead_sentence = lead if lead.endswith((".", "!", "?")) else f"{lead}."
+
+    detail_prefix = f"{label}: "
+    detail_items: list[str] = []
+    for item in items:
+        candidate_items = detail_items + [_drop_terminal_punctuation(item)]
+        detail_text = "; ".join(candidate_items)
+        candidate = f"{lead_sentence} {detail_prefix}{detail_text}.".strip()
+        if len(candidate) <= limit:
+            detail_items = candidate_items
+            continue
+        if not detail_items:
+            remaining = max(40, limit - len(f"{lead_sentence} {detail_prefix}".strip()) - 1)
+            detail_items = [_truncate_sentence(item, remaining)]
+        break
+
+    if not detail_items:
+        return _truncate_sentence(lead_sentence or f"{detail_prefix}{items[0]}.", limit)
+    return _truncate_sentence(f"{lead_sentence} {detail_prefix}{'; '.join(detail_items)}.".strip(), limit)
+
+
+def _summarize_trump_numbered_list(text: str, limit: int) -> str:
+    extracted = _extract_numbered_list_segments(text)
+    if extracted is None:
+        return ""
+
+    intro, items = extracted
+    intro_clean = _clean_trump_numbered_list_intro(intro)
+    lead_sentence = ""
+    if intro_clean:
+        lead_sentence = f"Ông Donald Trump cho biết {_brief_clause(intro_clean, min(220, limit))}."
+
+    detail_items: list[str] = []
+    for item in items:
+        cleaned_item = _clean_trump_summary_text(item)
+        if not cleaned_item:
+            continue
+        candidate_items = detail_items + [_drop_terminal_punctuation(cleaned_item)]
+        candidate = f"{lead_sentence} Các điểm chính: {'; '.join(candidate_items)}.".strip()
+        if len(candidate) <= limit:
+            detail_items = candidate_items
+            continue
+        if not detail_items:
+            remaining = max(45, limit - len(f"{lead_sentence} Các điểm chính:".strip()) - 1)
+            detail_items = [_truncate_sentence(cleaned_item, remaining)]
+        break
+
+    if not detail_items:
+        return _truncate_sentence(lead_sentence, limit)
+    return _truncate_sentence(f"{lead_sentence} Các điểm chính: {'; '.join(detail_items)}.".strip(), limit)
+
+
 def _clean_trump_summary_text(text: str) -> str:
     cleaned = _normalize_spaces(_drop_terminal_punctuation(text))
     cleaned = re.sub(r"\b[Tt]ổng thống\s+DONALD J\.?\s*TRUMP\b", "", cleaned).strip(" ,")
@@ -500,13 +655,21 @@ def _summarize_caption(
     cleaned = _normalize_spaces(URL_PATTERN.sub("", text))
     if not cleaned:
         return ""
+    if source_id == "x:kobeissiletter":
+        list_summary = _summarize_x_numbered_list(text, limit)
+        if list_summary:
+            return list_summary
+    if source_id == "truthsocial:realDonaldTrump":
+        list_summary = _summarize_trump_numbered_list(text, limit)
+        if list_summary:
+            return list_summary
     if source_id == "truthsocial:realDonaldTrump":
         source_scan_limit = max(limit * 2, 420)
         source_scan_sentences = max(max_sentences + 2, 5)
     else:
         source_scan_limit = limit
         source_scan_sentences = max_sentences
-    sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+    sentences = _merge_sentence_fragments(re.split(r"(?<=[.!?])\s+", cleaned))
     compact_sentences: list[str] = []
     current_length = 0
     for sentence in sentences:

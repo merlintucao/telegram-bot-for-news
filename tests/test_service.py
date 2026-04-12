@@ -657,6 +657,35 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("Ông cảnh báo Nếu Iran vi phạm thỏa thuận, giao tranh sẽ bùng phát trở lại ngay lập tức.", message)
         self.assertIn("Ông nhấn mạnh Không có vũ khí hạt nhân.", message)
 
+    def test_format_post_message_for_trump_numbered_list_keeps_multiple_items(self) -> None:
+        post = make_post(
+            "101",
+            (
+                "BREAKING: Initial details are emerging as the US and Iran conduct their first direct meeting since 1979.\n\n"
+                "Details include:\n\n"
+                "1. The Strait of Hormuz remains a point of serious disagreement\n\n"
+                "2. US military says 2 US warships have transited the Strait of Hormuz today\n\n"
+                "3. Talks are expected to continue tonight and may extend into tomorrow"
+            ),
+        )
+
+        message = format_post_message(
+            post,
+            translated_text=(
+                "THÔNG TIN NÓNG: Các chi tiết ban đầu đang xuất hiện khi Mỹ và Iran tiến hành cuộc gặp trực tiếp đầu tiên kể từ năm 1979.\n\n"
+                "Chi tiết bao gồm:\n\n"
+                "1. Eo biển Hormuz vẫn là một điểm bất đồng nghiêm trọng\n\n"
+                "2. Quân đội Mỹ cho biết 2 tàu chiến Mỹ đã đi qua eo biển Hormuz hôm nay\n\n"
+                "3. Các cuộc đàm phán dự kiến sẽ tiếp tục tối nay và có thể kéo dài sang ngày mai"
+            ),
+        )
+
+        self.assertIn("Ông Donald Trump cho biết Các chi tiết ban đầu đang xuất hiện khi Mỹ và Iran tiến hành cuộc gặp trực tiếp đầu tiên kể từ năm 1979.", message)
+        self.assertIn("Các điểm chính:", message)
+        self.assertIn("Eo biển Hormuz vẫn là một điểm bất đồng nghiêm trọng", message)
+        self.assertIn("2 tàu chiến Mỹ đã đi qua eo biển Hormuz hôm nay", message)
+        self.assertIn("có thể kéo dài sang ngày mai", message)
+
     def test_format_post_message_keeps_meaningful_quoted_terms(self) -> None:
         post = make_post(
             "101",
@@ -1220,6 +1249,52 @@ class ServiceTests(unittest.TestCase):
 
         self.assertNotIn("BREAKING:", summary)
         self.assertTrue(summary.startswith("Iran is struggling"))
+
+    def test_summarize_caption_for_x_merges_numbered_list_fragments(self) -> None:
+        summary = _summarize_caption(
+            (
+                "Initial details are emerging as the US and Iran hold direct talks. "
+                "Details include: 1. Iran says negotiators will meet again next week."
+            ),
+            limit=220,
+            source_id="x:kobeissiletter",
+            max_sentences=2,
+        )
+
+        self.assertNotIn("Details include: 1.", summary)
+        self.assertIn("Details include: Iran says negotiators will meet again next week.", summary)
+
+    def test_summarize_caption_for_x_keeps_leading_numeric_fact(self) -> None:
+        summary = _summarize_caption(
+            "1.5% inflation triggered a sharp move higher in bond yields today.",
+            limit=160,
+            source_id="x:kobeissiletter",
+            max_sentences=2,
+        )
+
+        self.assertIn("1.5% inflation", summary)
+
+    def test_summarize_caption_for_x_numbered_lists_include_multiple_items(self) -> None:
+        summary = _summarize_caption(
+            (
+                "BREAKING: Initial details are emerging as the US and Iran conduct their first direct "
+                "meeting since 1979.\n\n"
+                "Details include:\n\n"
+                "1. The Strait of Hormuz remains a point of serious disagreement\n\n"
+                "2. US military says 2 US warships have transited the Strait of Hormuz today\n\n"
+                "3. Talks are expected to continue tonight and may extend into tomorrow\n\n"
+                "We expect to receive much more detail in the coming hours."
+            ),
+            limit=320,
+            source_id="x:kobeissiletter",
+            max_sentences=3,
+        )
+
+        self.assertIn("first direct meeting since 1979", summary)
+        self.assertIn("Strait of Hormuz remains a point of serious disagreement", summary)
+        self.assertIn("2 US warships have transited the Strait of Hormuz today", summary)
+        self.assertIn("Talks are expected to continue tonight and may extend into tomorrow", summary)
+        self.assertNotIn("We expect to receive much more detail", summary)
 
     def test_source_routes_can_override_and_broadcast(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
