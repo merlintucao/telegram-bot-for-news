@@ -559,6 +559,63 @@ class ServiceTests(unittest.TestCase):
 
         self.assertNotIn("Link summary: Link to t.co", message)
 
+    def test_format_post_message_skips_trivial_rt_summary_and_link(self) -> None:
+        post = SourcePost(
+            source_id="truthsocial:realDonaldTrump",
+            source_name="Truth Social",
+            id="story-trump-rt-1",
+            account_handle="realDonaldTrump",
+            created_at="2026-04-12T04:53:00Z",
+            url="https://truthsocial.com/@realDonaldTrump/posts/999",
+            body_text="RT https://example.com/story",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={
+                "id": "story-trump-rt-1",
+                "card": {"title": "RT"},
+            },
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="RT",
+        )
+
+        self.assertNotIn("Ông Donald Trump cho biết RT.", message)
+        self.assertNotIn("Link summary: RT.", message)
+
+    def test_format_post_message_uses_card_description_when_title_is_junk(self) -> None:
+        post = SourcePost(
+            source_id="truthsocial:realDonaldTrump",
+            source_name="Truth Social",
+            id="story-trump-card-1",
+            account_handle="realDonaldTrump",
+            created_at="2026-04-12T04:53:00Z",
+            url="https://truthsocial.com/@realDonaldTrump/posts/1000",
+            body_text="RT https://example.com/story",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={
+                "id": "story-trump-card-1",
+                "card": {
+                    "title": "RT",
+                    "description": "Trump signals a possible naval blockade if Iran refuses terms",
+                },
+            },
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="RT",
+        )
+
+        self.assertIn(
+            "Link summary: Trump signals a possible naval blockade if Iran refuses terms.",
+            message,
+        )
+
     def test_format_post_message_keeps_multiple_sentences_for_long_story(self) -> None:
         post = make_post(
             "101",
@@ -1184,6 +1241,56 @@ class ServiceTests(unittest.TestCase):
             message,
         )
 
+    def test_format_post_message_for_reuters_story_adds_terminal_period(self) -> None:
+        post = SourcePost(
+            source_id="rss:reuters",
+            source_name="Reuters",
+            id="story-2",
+            account_handle="Reuters",
+            created_at="2026-04-07T08:00:00Z",
+            url="https://news.google.com/rss/articles/test-2",
+            body_text="US fourth-quarter GDP growth revised lower",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-2", "source": "Reuters"},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="Tăng trưởng GDP quý 4 của Mỹ được điều chỉnh giảm",
+        )
+
+        self.assertIn(
+            "Tăng trưởng GDP quý 4 của Mỹ được điều chỉnh giảm.\n\nTheo Reuters",
+            message,
+        )
+
+    def test_format_post_message_for_ap_story_adds_terminal_period(self) -> None:
+        post = SourcePost(
+            source_id="rss:ap-world",
+            source_name="AP News",
+            id="story-ap-2",
+            account_handle="AP News",
+            created_at="2026-04-07T08:00:00Z",
+            url="https://apnews.com/article/test-story-2",
+            body_text="Netanyahu authorizes direct talks with Lebanon",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-ap-2"},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="Thủ tướng Israel Benjamin Netanyahu cho biết ông đã cho phép đàm phán trực tiếp với Lebanon sớm nhất có thể",
+        )
+
+        self.assertIn(
+            "Thủ tướng Israel Benjamin Netanyahu cho biết ông đã cho phép đàm phán trực tiếp với Lebanon sớm nhất có thể.\n\nTheo AP News",
+            message,
+        )
+
     def test_format_post_message_for_ft_story_matches_ap_style(self) -> None:
         post = SourcePost(
             source_id="rss:ft",
@@ -1324,6 +1431,42 @@ class ServiceTests(unittest.TestCase):
         )
 
         self.assertIn("1.5% inflation", summary)
+
+    def test_summarize_caption_for_x_keeps_short_one_word_alert(self) -> None:
+        summary = _summarize_caption(
+            "Bitcoin",
+            limit=80,
+            source_id="x:kobeissiletter",
+            max_sentences=1,
+        )
+
+        self.assertEqual("Bitcoin.", summary)
+
+    def test_summarize_caption_for_x_keeps_short_two_letter_alert(self) -> None:
+        summary = _summarize_caption(
+            "US",
+            limit=80,
+            source_id="x:kobeissiletter",
+            max_sentences=1,
+        )
+
+        self.assertEqual("US.", summary)
+
+    def test_summarize_caption_for_x_avoids_dangling_clause_truncation(self) -> None:
+        summary = _summarize_caption(
+            (
+                "Giá trị tài sản ròng của hộ gia đình Hoa Kỳ đã tăng +2,2 nghìn tỷ USD trong quý 4 năm 2025, "
+                "lên mức kỷ lục 184,1 nghìn tỷ USD. Điều này chủ yếu được thúc đẩy bởi lượng cổ phiếu nắm giữ "
+                "đã tăng +1,6 nghìn tỷ USD khi thị trường tiếp tục đi lên."
+            ),
+            limit=170,
+            source_id="x:kobeissiletter",
+            max_sentences=2,
+        )
+
+        self.assertIn("Giá trị tài sản ròng của hộ gia đình Hoa Kỳ đã tăng +2,2 nghìn tỷ USD", summary)
+        self.assertNotIn("khi...", summary)
+        self.assertNotIn("...", summary)
 
     def test_summarize_caption_for_x_numbered_lists_include_multiple_items(self) -> None:
         summary = _summarize_caption(

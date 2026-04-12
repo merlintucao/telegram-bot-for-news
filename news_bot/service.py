@@ -140,11 +140,30 @@ def _drop_terminal_punctuation(text: str) -> str:
     return text.rstrip(" .!?:;")
 
 
+def _is_meaningful_summary_text(text: str) -> bool:
+    cleaned = _normalize_spaces(_drop_terminal_punctuation(text))
+    if not cleaned:
+        return False
+    if cleaned.casefold() in {"rt", "repost", "quoted post", "quoted context"}:
+        return False
+    if not re.search(r"[A-Za-zÀ-ỹ0-9]", cleaned):
+        return False
+    if re.fullmatch(r"[^\wÀ-ỹ]*", cleaned):
+        return False
+    if re.fullmatch(r"(?:[.?!,:;\-_/\\|~`@#$%^&*+=])+",
+        cleaned,
+    ):
+        return False
+    return True
+
+
 def _clean_x_summary_text(text: str) -> str:
     cleaned = _normalize_spaces(_drop_terminal_punctuation(text))
     cleaned = re.sub(r"^\s*(Quoted context|Quoted post)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^\s*(BREAKING|UPDATE|NEW|ALERT)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^\s*(BREAKING|UPDATE|NEW|ALERT)\b[\s,-]*", "", cleaned, flags=re.IGNORECASE)
+    if not _is_meaningful_summary_text(cleaned):
+        return ""
     return cleaned
 
 
@@ -315,7 +334,10 @@ def _clean_trump_summary_text(text: str) -> str:
     )
     cleaned = re.sub(r"\b(KẾ HOẠCH|KẾ HOẠCH MƯỜI ĐIỂM|GIẢ MẠO|TRÒ LỪA BỊP)\b", "", cleaned)
     cleaned = re.sub(r"(?:\s+|^)[A-Z]\.?$", "", cleaned).strip(" ,")
-    return _normalize_spaces(cleaned.strip(" ,"))
+    cleaned = _normalize_spaces(cleaned.strip(" ,"))
+    if not _is_meaningful_summary_text(cleaned):
+        return ""
+    return cleaned
 
 
 def _summary_clause(text: str) -> str:
@@ -342,6 +364,21 @@ def _neutral_support_clause(text: str) -> str:
     return _normalize_spaces(cleaned)
 
 
+def _truncate_x_summary_sentence(text: str, limit: int) -> str:
+    cleaned = _normalize_spaces(text)
+    if len(cleaned) <= limit:
+        return cleaned
+
+    core = _drop_terminal_punctuation(cleaned)
+    for separator in (",", ";", ":"):
+        head, found, _tail = core.partition(separator)
+        head = head.strip()
+        if found and len(head) >= 40 and len(head) + 1 <= limit:
+            return f"{head}."
+
+    return _truncate_sentence(cleaned, limit)
+
+
 def _rewrite_x_summary_vi(sentences: list[str], limit: int) -> str:
     cleaned_sentences: list[str] = []
     for sentence in sentences:
@@ -354,7 +391,7 @@ def _rewrite_x_summary_vi(sentences: list[str], limit: int) -> str:
     lead = cleaned_sentences[0]
     lead_sentence = lead if lead.endswith((".", "!", "?")) else f"{lead}."
     if len(cleaned_sentences) == 1:
-        return _truncate_sentence(lead_sentence, limit)
+        return _truncate_x_summary_sentence(lead_sentence, limit)
 
     def support_score(text: str) -> tuple[int, int]:
         lowered = text.lower()
@@ -383,12 +420,20 @@ def _rewrite_x_summary_vi(sentences: list[str], limit: int) -> str:
         if len(projected) <= limit:
             parts.append(support_sentence)
         elif support_score(support)[0] >= 3:
-            trimmed_support = _truncate_sentence(support_sentence, max(40, limit - len(lead_sentence) - 1))
+            trimmed_support = _truncate_x_summary_sentence(
+                support_sentence,
+                max(40, limit - len(lead_sentence) - 1),
+            )
             projected = " ".join(parts + [trimmed_support]).strip()
-            if len(projected) <= limit:
+            if len(projected) <= limit and "..." not in trimmed_support:
                 parts.append(trimmed_support)
 
-    return _truncate_sentence(" ".join(parts), limit)
+    summary = " ".join(parts).strip()
+    if len(summary) <= limit:
+        return summary
+    if len(parts) > 1:
+        return _truncate_x_summary_sentence(lead_sentence, limit)
+    return _truncate_x_summary_sentence(summary, limit)
 
 @dataclass(slots=True)
 class TrumpFactSlots:
@@ -714,11 +759,15 @@ def _summarize_links(post: SourcePost, limit: int = 120) -> list[str]:
     if isinstance(card, dict):
         title = _normalize_spaces(str(card.get("title") or ""))
         description = _normalize_spaces(str(card.get("description") or ""))
-        if title:
+        if _is_meaningful_summary_text(title):
             detail = title
-            if description and description.casefold() != title.casefold():
+            if _is_meaningful_summary_text(description) and description.casefold() != title.casefold():
                 detail = f"{title} - {_truncate_sentence(description, max(20, limit - len(title) - 3))}"
             lines.append(f"Link summary: {_normalize_summary_tail(_truncate_sentence(detail, limit))}")
+        elif _is_meaningful_summary_text(description):
+            lines.append(
+                f"Link summary: {_normalize_summary_tail(_truncate_sentence(description, limit))}"
+            )
 
     body_urls = []
     seen_urls: set[str] = set()
@@ -739,7 +788,7 @@ def _summarize_links(post: SourcePost, limit: int = 120) -> list[str]:
             if url not in sentence:
                 continue
             sentence_summary = _sentence_without_urls(sentence)
-            if sentence_summary:
+            if _is_meaningful_summary_text(sentence_summary):
                 lines.append(
                     f"Link summary: {_normalize_summary_tail(_truncate_sentence(sentence_summary, limit))}"
                 )
@@ -846,7 +895,7 @@ def _build_summary_lines(
         max_sentences=2 if post.source_id in WIRE_STORY_SOURCE_IDS or post.source_id == "x:kobeissiletter" else 3,
     )
     if caption_summary:
-        if post.source_id == "rss:ft":
+        if post.source_id in ATTRIBUTED_WIRE_SOURCE_IDS:
             caption_summary = _normalize_summary_tail(caption_summary)
         if post.source_id in ATTRIBUTED_WIRE_SOURCE_IDS:
             summary_lines.append(caption_summary)
