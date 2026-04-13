@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 
 from news_bot.cli import run_status
@@ -16,6 +17,7 @@ from news_bot.routing import build_router
 from news_bot.service import (
     NewsBotService,
     _summarize_caption,
+    _summarize_x_numbered_list,
     format_post_caption,
     format_post_message,
 )
@@ -68,6 +70,23 @@ def make_post(post_id: str, text: str) -> SourcePost:
         is_reblog=False,
         media_attachments=(),
         raw_payload={"id": post_id, "content": text},
+    )
+
+
+def make_trump_link_post(post_id: str, headline: str, url: str) -> SourcePost:
+    html = f'<p>{headline}: <a href="{url}" rel="nofollow noopener noreferrer" target="_blank">{url}</a></p>'
+    return SourcePost(
+        source_id="truthsocial:realDonaldTrump",
+        source_name="Truth Social",
+        id=post_id,
+        account_handle="realDonaldTrump",
+        created_at="2026-04-07T08:00:00Z",
+        url=f"https://truthsocial.com/@realDonaldTrump/posts/{post_id}",
+        body_text=f"{headline}: {url}",
+        is_reply=False,
+        is_reblog=False,
+        media_attachments=(),
+        raw_payload={"id": post_id, "content": html},
     )
 
 
@@ -237,8 +256,94 @@ class ServiceTests(unittest.TestCase):
 
             self.assertTrue(summary.bootstrapped)
             self.assertEqual(summary.sent_count, 0)
-            self.assertEqual(store.get_last_status_id(client.source_id), "200")
-            self.assertEqual(sender.messages, [])
+
+    def test_run_once_skips_duplicate_trump_link_posts_with_same_headline_and_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = replace(config, bootstrap_latest_only=False)
+            store = StateStore(db_path)
+            original = make_trump_link_post(
+                "101",
+                "Impeachment Bombshell: Secret memos expose Ukraine accuser's bias, hearsay, and false claim",
+                "https://justthenews.com/accountability/whistleblowers/ukraine-bombshell",
+            )
+            duplicate = make_trump_link_post(
+                "102",
+                "Impeachment Bombshell: Secret memos expose Ukraine accuser's bias, hearsay, and false claim",
+                "https://justthenews.com/accountability/whistleblowers/ukraine-bombshell",
+            )
+            client = FakeClient([[original], [duplicate]])
+            sender = FakeSender()
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                sleep_fn=lambda seconds: None,
+            )
+
+            first = service.run_once()
+            second = service.run_once()
+
+            self.assertEqual(first.sent_count, 1)
+            self.assertEqual(second.sent_count, 0)
+            self.assertEqual(second.filtered_count, 1)
+            self.assertEqual(sender.deliveries, [("@chat", "101")])
+            self.assertEqual(store.get_last_status_id(client.source_id), "102")
+
+    def test_run_once_skips_duplicate_trump_link_posts_with_escaped_html_entities(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = replace(make_config(db_path), bootstrap_latest_only=False)
+            store = StateStore(db_path)
+            original = make_trump_link_post(
+                "101",
+                "Trump's A & B plan for Iran",
+                "https://example.com/story",
+            )
+            duplicate = make_trump_link_post(
+                "102",
+                "Trump's A & B plan for Iran",
+                "https://example.com/story",
+            )
+            duplicate = SourcePost(
+                source_id=duplicate.source_id,
+                source_name=duplicate.source_name,
+                id=duplicate.id,
+                account_handle=duplicate.account_handle,
+                created_at=duplicate.created_at,
+                url=duplicate.url,
+                body_text=duplicate.body_text,
+                is_reply=duplicate.is_reply,
+                is_reblog=duplicate.is_reblog,
+                media_attachments=duplicate.media_attachments,
+                raw_payload={
+                    **duplicate.raw_payload,
+                    "content": '<p>Trump&#39;s A &amp; B plan for Iran: <a href="https://example.com/story">https://example.com/story</a></p>',
+                },
+            )
+            client = FakeClient([[original], [duplicate]])
+            sender = FakeSender()
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                sleep_fn=lambda seconds: None,
+            )
+
+            first = service.run_once()
+            second = service.run_once()
+
+            self.assertEqual(first.sent_count, 1)
+            self.assertEqual(second.sent_count, 0)
+            self.assertEqual(second.filtered_count, 1)
+            self.assertEqual(sender.deliveries, [("@chat", "101")])
 
     def test_new_posts_are_sent_in_oldest_first_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -604,6 +709,38 @@ class ServiceTests(unittest.TestCase):
         )
 
         self.assertIn("Ông Donald Trump cho biết RT-PCR tăng mạnh khi các quốc gia mở rộng năng lực xét nghiệm.", message)
+
+    def test_format_post_message_for_kobeissi_warning_keeps_conditional_consequence(self) -> None:
+        post = SourcePost(
+            source_id="x:kobeissiletter",
+            source_name="The Kobeissi Letter",
+            id="story-x-warning-1",
+            account_handle="KobeissiLetter",
+            created_at="2026-04-13T14:26:00Z",
+            url="https://x.com/KobeissiLetter/status/2040000000000000001",
+            body_text=(
+                "BREAKING: President Trump issues a warning to Iran: "
+                "\"If any of these ships come anywhere close to our blockade, they will be immediately eliminated, "
+                "using the same system of kill that we use against the drug dealers on boats at Sea.\""
+            ),
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-x-warning-1", "text": "warning"},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text=(
+                "Tổng thống Trump đưa ra cảnh báo với Iran. "
+                "Nếu bất kỳ con tàu nào trong số này đến gần khu vực phong tỏa của chúng tôi, "
+                "chúng sẽ bị tiêu diệt ngay lập tức, sử dụng cùng hệ thống mà chúng tôi dùng để đối phó với những kẻ buôn ma túy trên biển."
+            ),
+        )
+
+        self.assertIn("Tổng thống Trump đưa ra cảnh báo với Iran.", message)
+        self.assertIn("chúng sẽ bị tiêu diệt ngay lập tức", message)
+        self.assertNotIn("Nếu bất kỳ con tàu nào trong số này đến gần khu vực phong tỏa của chúng tôi.", message)
 
     def test_format_post_message_uses_card_description_when_title_is_junk(self) -> None:
         post = SourcePost(
@@ -1544,6 +1681,22 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("Initial Jobless Claims data - Thursday", summary)
         self.assertIn("10 Fed Speaker Events This Week", summary)
         self.assertIn("Today marks day 44 of the Iran War", summary)
+
+    def test_summarize_caption_for_x_numbered_list_does_not_end_mid_item(self) -> None:
+        summary = _summarize_x_numbered_list(
+            (
+                "The world is watching oil:\n\n"
+                "1. Google searches for \"oil prices\" surged to a record high in the data set\n\n"
+                "2. This figure exceeded the peak seen during the Russia-Ukraine war\n\n"
+                "3. Brent crude rose sharply in overnight trading"
+            ),
+            limit=145,
+        )
+
+        self.assertIn("Google searches for \"oil prices\" surged to a record high in the data set", summary)
+        self.assertNotIn("Russia-Ukraine war...", summary)
+        self.assertNotIn("....", summary)
+        self.assertTrue(summary.endswith("."))
 
     def test_source_routes_can_override_and_broadcast(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

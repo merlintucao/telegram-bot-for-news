@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 import re
 import time
@@ -23,6 +24,7 @@ LOGGER = logging.getLogger(__name__)
 
 HANDLE_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 URL_PATTERN = re.compile(r"https?://\S+")
+HREF_URL_PATTERN = re.compile(r'href="(https?://[^"]+)"', flags=re.IGNORECASE)
 VIETNAM_TZ = timezone(timedelta(hours=7))
 WIRE_STORY_SOURCE_IDS = {"rss:reuters", "rss:ap-world", "rss:ft"}
 ATTRIBUTED_WIRE_SOURCE_IDS = {"rss:reuters", "rss:ap-world", "rss:ft"}
@@ -85,6 +87,41 @@ def _format_posted_at(created_at: str) -> str:
         parsed = parsed.replace(tzinfo=UTC)
     localized = parsed.astimezone(VIETNAM_TZ)
     return localized.strftime("%H:%M %d/%m/%Y")
+
+
+def _normalize_url_for_signature(url: str) -> str:
+    cleaned = _normalize_spaces(url).strip().rstrip("/")
+    return cleaned.casefold()
+
+
+def _extract_external_url_from_trump_payload(post: SourcePost | None = None, raw_payload: dict[str, object] | None = None) -> str:
+    payload = raw_payload if raw_payload is not None else (post.raw_payload if post is not None else {})
+    content = str(payload.get("content") or "")
+    for match in HREF_URL_PATTERN.finditer(content):
+        href = match.group(1).strip()
+        if href and "truthsocial.com" not in href.casefold():
+            return href
+    body_text = post.body_text if post is not None else str(payload.get("content") or "")
+    for match in URL_PATTERN.finditer(body_text):
+        href = match.group(0).strip()
+        if href and "truthsocial.com" not in href.casefold():
+            return href
+    return ""
+
+
+def _trump_post_equivalence_key(post: SourcePost | None = None, raw_payload: dict[str, object] | None = None) -> str:
+    payload = raw_payload if raw_payload is not None else (post.raw_payload if post is not None else {})
+    if post is not None:
+        body_text = post.body_text
+    else:
+        content = html.unescape(str(payload.get("content") or ""))
+        body_text = re.sub(r"<[^>]+>", " ", content)
+    normalized_body = _normalize_spaces(body_text)
+    headline = re.split(r"\bhttps?://", normalized_body, maxsplit=1)[0].strip(" \t\r\n:;,-")
+    url = _extract_external_url_from_trump_payload(post=post, raw_payload=payload)
+    if not headline or not url:
+        return ""
+    return f"{headline.casefold()}|{_normalize_url_for_signature(url)}"
 
 
 def _normalize_spaces(text: str) -> str:
@@ -320,8 +357,7 @@ def _summarize_x_numbered_list(text: str, limit: int) -> str:
             detail_items = candidate_items
             continue
         if not detail_items:
-            remaining = max(40, limit - len(f"{lead_sentence} {detail_prefix}".strip()) - 1)
-            detail_items = [_truncate_sentence(item, remaining)]
+            break
         break
 
     trailing_sentence = ""
@@ -331,11 +367,22 @@ def _summarize_x_numbered_list(text: str, limit: int) -> str:
             trailing_sentence = trailing_context if trailing_context.endswith((".", "!", "?")) else f"{trailing_context}."
 
     if not detail_items:
-        return _truncate_sentence(lead_sentence or f"{detail_prefix}{items[0]}.", limit)
+        fallback = (lead_sentence or "").strip()
+        prefix = f"{lead_sentence} {detail_prefix}".strip()
+        remaining = limit - len(prefix) - 1
+        if remaining >= 20:
+            first_item = _truncate_x_summary_sentence(items[0], remaining)
+            if first_item:
+                candidate = f"{prefix}{_drop_terminal_punctuation(first_item)}.".strip()
+                if len(candidate) <= limit:
+                    return candidate
+        if fallback and len(fallback) <= limit:
+            return fallback
+        return _truncate_x_summary_sentence(lead_sentence or items[0], limit)
     summary = f"{lead_sentence} {detail_prefix}{'; '.join(detail_items)}.".strip()
     if trailing_sentence:
         summary = f"{summary} {trailing_sentence}".strip()
-    return _truncate_sentence(summary, limit)
+    return summary
 
 
 def _summarize_trump_numbered_list(text: str, limit: int) -> str:
@@ -391,14 +438,67 @@ def _summary_clause(text: str) -> str:
     return _clean_trump_summary_text(text)
 
 
+def _conditional_tail_is_material(head: str, tail: str) -> bool:
+    lowered_head = _normalize_spaces(head).lower().lstrip('"“”\'')
+    lowered_tail = _normalize_spaces(tail).lower()
+    if not lowered_head.startswith(("nếu ", "khi ", "trừ khi ")):
+        return False
+    consequence_markers = (
+        "thì",
+        "sẽ",
+        "bị",
+        "được",
+        "phải",
+        "ngay lập tức",
+        "lập tức",
+        "eliminated",
+        "will be",
+        "would be",
+    )
+    return any(marker in lowered_tail for marker in consequence_markers)
+
+
+def _is_incomplete_conditional_fragment_vi(text: str) -> bool:
+    cleaned = _normalize_spaces(_drop_terminal_punctuation(text))
+    if not cleaned:
+        return False
+    lowered = cleaned.lower().lstrip('"“”\'')
+    if not lowered.startswith(("nếu ", "khi ", "trừ khi ")):
+        return False
+    if "," in cleaned:
+        head, _sep, tail = cleaned.partition(",")
+        return not _conditional_tail_is_material(head, tail)
+    consequence_markers = (" thì ", " sẽ ", " bị ", " được ", " phải ", " ngay lập tức", " lập tức")
+    return not any(marker in f" {lowered} " for marker in consequence_markers)
+
+
+def _compact_conditional_sentence_vi(text: str, limit: int) -> str:
+    cleaned = _normalize_spaces(_drop_terminal_punctuation(text))
+    if not cleaned or "," not in cleaned:
+        return ""
+    head, _sep, tail = cleaned.partition(",")
+    if not _conditional_tail_is_material(head, tail):
+        return ""
+    consequence = tail.split(",", 1)[0].strip()
+    if not consequence:
+        return ""
+    candidate = _normalize_spaces(f"{head.strip()}, {consequence}.")
+    if len(candidate) <= limit and not _is_incomplete_conditional_fragment_vi(candidate):
+        return candidate
+    return ""
+
+
 def _brief_clause(text: str, limit: int) -> str:
     cleaned = _summary_clause(text)
     if len(cleaned) <= limit:
         return cleaned
+    compact_conditional = _compact_conditional_sentence_vi(cleaned, limit)
+    if compact_conditional:
+        return compact_conditional.rstrip(".")
 
     for separator in (",", ";", ":"):
-        head, found, _tail = cleaned.partition(separator)
-        if found and len(head.strip()) >= 40:
+        head, found, tail = cleaned.partition(separator)
+        if found and len(head.strip()) >= 40 and not _conditional_tail_is_material(head, tail):
             return head.strip()
 
     return _truncate_sentence(cleaned, limit)
@@ -415,10 +515,15 @@ def _truncate_x_summary_sentence(text: str, limit: int) -> str:
     cleaned = _normalize_spaces(text)
     if len(cleaned) <= limit:
         return cleaned
+    compact_conditional = _compact_conditional_sentence_vi(cleaned, limit)
+    if compact_conditional:
+        return compact_conditional
 
     core = _drop_terminal_punctuation(cleaned)
-    def tail_is_material(tail: str) -> bool:
+    def tail_is_material(head: str, tail: str) -> bool:
         lowered = tail.lower()
+        if _conditional_tail_is_material(head, tail):
+            return True
         if re.search(r"\b\d+(?:[.,]\d+)?\b", tail):
             return True
         material_markers = (
@@ -431,7 +536,7 @@ def _truncate_x_summary_sentence(text: str, limit: int) -> str:
     for separator in (",", ";", ":"):
         head, found, tail = core.partition(separator)
         head = head.strip()
-        if found and len(head) >= 40 and len(head) + 1 <= limit and not tail_is_material(tail.strip()):
+        if found and len(head) >= 40 and len(head) + 1 <= limit and not tail_is_material(head, tail.strip()):
             return f"{head}."
 
     return _truncate_sentence(cleaned, limit)
@@ -454,6 +559,8 @@ def _rewrite_x_summary_vi(sentences: list[str], limit: int) -> str:
     def support_score(text: str) -> tuple[int, int]:
         lowered = text.lower()
         score = 0
+        if lowered.lstrip('"“”\'').startswith(("nếu ", "khi ", "trừ khi ")):
+            score += 3
         if re.search(r"\b\d+(?:[.,]\d+)?\b", text):
             score += 3
         if any(token in lowered for token in ("$", "%", "tỷ", "nghìn tỷ", "triệu", "billion", "trillion", "million")):
@@ -483,7 +590,7 @@ def _rewrite_x_summary_vi(sentences: list[str], limit: int) -> str:
                 max(40, limit - len(lead_sentence) - 1),
             )
             projected = " ".join(parts + [trimmed_support]).strip()
-            if len(projected) <= limit and "..." not in trimmed_support:
+            if len(projected) <= limit and "..." not in trimmed_support and not _is_incomplete_conditional_fragment_vi(trimmed_support):
                 parts.append(trimmed_support)
 
     summary = " ".join(parts).strip()
@@ -742,7 +849,8 @@ def _rewrite_trump_summary_vi(sentences: list[str], limit: int) -> str:
         if len(projected) > limit:
             if index == 0:
                 support_sentence = _truncate_sentence(support_sentence, max(30, remaining))
-                summary_parts.append(support_sentence)
+                if not _is_incomplete_conditional_fragment_vi(support_sentence):
+                    summary_parts.append(support_sentence)
             break
         summary_parts.append(support_sentence)
 
@@ -1463,6 +1571,12 @@ class NewsBotService:
 
         sent_count = 0
         filtered_count = 0
+        delivered_equivalence_keys: set[str] = set()
+        if source_key == "truthsocial:realDonaldTrump":
+            for payload in self.store.recent_delivered_payloads(source_key, limit=80):
+                key = _trump_post_equivalence_key(raw_payload=payload)
+                if key:
+                    delivered_equivalence_keys.add(key)
         for post in posts:
             if self.store.was_delivered(source_key, post.id):
                 continue
@@ -1487,6 +1601,27 @@ class NewsBotService:
                     decision.reason or "filter",
                 )
                 continue
+
+            if source_key == "truthsocial:realDonaldTrump":
+                equivalence_key = _trump_post_equivalence_key(post=post)
+                if equivalence_key and equivalence_key in delivered_equivalence_keys:
+                    filtered_count += 1
+                    if not dry_run:
+                        self.store.log_source_event(
+                            run_id=run_id,
+                            source_key=source_key,
+                            source_name=post.source_name,
+                            event_type="filtered",
+                            status_id=post.id,
+                            post_url=post.url or None,
+                            detail="duplicate Trump link post",
+                        )
+                    LOGGER.info(
+                        "Skipping %s from %s due to duplicate Trump link content",
+                        post.id,
+                        source_key,
+                    )
+                    continue
 
             translated_text = self._translate_post(post)
             translated_auxiliary_lines = self._translate_auxiliary_summary_lines(post)
@@ -1518,6 +1653,10 @@ class NewsBotService:
                 )
 
             self.store.record_delivery(source_key, post)
+            if source_key == "truthsocial:realDonaldTrump":
+                equivalence_key = _trump_post_equivalence_key(post=post)
+                if equivalence_key:
+                    delivered_equivalence_keys.add(equivalence_key)
             self.store.log_source_event(
                 run_id=run_id,
                 source_key=source_key,

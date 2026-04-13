@@ -206,6 +206,28 @@ class StateStore:
             ).fetchone()
         return row is not None
 
+    def recent_delivered_payloads(self, source_key: str, limit: int = 50) -> tuple[dict[str, object], ...]:
+        with self._session() as connection:
+            rows = connection.execute(
+                """
+                SELECT raw_json
+                FROM delivered_posts
+                WHERE source_key = ?
+                ORDER BY delivered_at DESC
+                LIMIT ?
+                """,
+                (source_key, limit),
+            ).fetchall()
+        payloads: list[dict[str, object]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row["raw_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                payloads.append(payload)
+        return tuple(payloads)
+
     def start_run(self, dry_run: bool) -> int:
         with self._session() as connection:
             cursor = connection.execute(
