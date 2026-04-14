@@ -129,6 +129,8 @@ def run_doctor(config: AppConfig, skip_network: bool, network_only: bool = False
         print(f"- RSS feed urls configured: {len(config.rss_feed_urls)}")
     if "reuters_rss" in normalized_sources:
         print(f"- Reuters RSS url: {config.reuters_rss_url}")
+    if "investing_rss" in normalized_sources:
+        print(f"- Investing RSS url: {config.investing_rss_url}")
     if "ap_world_rss" in normalized_sources:
         print(f"- AP World RSS url: {config.ap_world_rss_url}")
     if "ft_rss" in normalized_sources:

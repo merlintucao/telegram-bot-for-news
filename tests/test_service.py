@@ -765,6 +765,24 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("chúng sẽ bị tiêu diệt ngay lập tức", message)
         self.assertNotIn("Nếu bất kỳ con tàu nào trong số này đến gần khu vực phong tỏa của chúng tôi.", message)
 
+    def test_format_post_message_strips_watch_style_trump_fragments(self) -> None:
+        post = make_post(
+            "101",
+            "Watch: Rep. Burchett reveals the government sends $40 million per week to the Taliban.",
+        )
+
+        message = format_post_message(
+            post,
+            translated_text=(
+                "Xem: Hạ nghị sĩ Burchett tiết lộ Chính phủ không cấp 40 triệu đô la mỗi tuần cho Taliban "
+                "và các đảng viên Đảng Dân chủ phản đối việc chấm dứt nó: Xem: Hạ nghị sĩ."
+            ),
+        )
+
+        self.assertNotIn("Ông Donald Trump cho biết Xem:", message)
+        self.assertNotIn("Xem: Hạ nghị sĩ.", message)
+        self.assertIn("Hạ nghị sĩ Burchett tiết lộ", message)
+
     def test_format_post_message_uses_card_description_when_title_is_junk(self) -> None:
         post = SourcePost(
             source_id="truthsocial:realDonaldTrump",
@@ -1522,6 +1540,34 @@ class ServiceTests(unittest.TestCase):
 
         self.assertIn(
             "Ả Rập Saudi và Qatar đều bị thiệt hại đáng kể về năng lực sản xuất trong cuộc chiến Mỹ-Israel chống lại Iran.\n\nTheo FT",
+            message,
+        )
+
+    def test_format_post_message_for_investing_story_matches_ft_style(self) -> None:
+        post = SourcePost(
+            source_id="rss:investing",
+            source_name="Investing",
+            id="story-inv-1",
+            account_handle="Investing",
+            created_at="2026-04-07T08:00:00Z",
+            url="https://www.investing.com/news/stock-market-news/test-story",
+            body_text="US stocks rose on Thursday as traders weighed fresh earnings and economic data.",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-inv-1"},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="Cổ phiếu Mỹ tăng vào thứ Năm khi giới đầu tư cân nhắc kết quả kinh doanh và dữ liệu kinh tế mới.",
+        )
+
+        self.assertFalse(message.startswith("Investing"))
+        self.assertNotIn("Posted:", message)
+        self.assertNotIn("Link:", message)
+        self.assertIn(
+            "Cổ phiếu Mỹ tăng vào thứ Năm khi giới đầu tư cân nhắc kết quả kinh doanh và dữ liệu kinh tế mới.\n\nTheo Investing",
             message,
         )
 

@@ -4,8 +4,15 @@ import unittest
 from pathlib import Path
 
 from news_bot.ap import APWorldRSSSource
-from news_bot.config import AppConfig, DEFAULT_AP_WORLD_RSS_URL, DEFAULT_FT_RSS_URL, DEFAULT_REUTERS_RSS_URL
+from news_bot.config import (
+    AppConfig,
+    DEFAULT_AP_WORLD_RSS_URL,
+    DEFAULT_FT_RSS_URL,
+    DEFAULT_INVESTING_RSS_URL,
+    DEFAULT_REUTERS_RSS_URL,
+)
 from news_bot.ft import FTRSSSource
+from news_bot.investing import InvestingRSSSource
 from news_bot.reuters import ReutersRSSSource
 from news_bot.sources import build_sources
 from news_bot.x import XKobeissiLetterSource
@@ -18,7 +25,7 @@ def make_config() -> AppConfig:
         source_chat_routes=(),
         source_keyword_filters=(),
         source_category_filters=(),
-        enabled_sources=("truthsocial_trump", "reuters_rss", "ap_world_rss", "ft_rss", "x_kobeissi_letter"),
+        enabled_sources=("truthsocial_trump", "reuters_rss", "investing_rss", "ap_world_rss", "ft_rss", "x_kobeissi_letter"),
         rss_feed_urls=(),
         truthsocial_fallback_feed_urls=(),
         truthsocial_handle="realDonaldTrump",
@@ -37,6 +44,7 @@ def make_config() -> AppConfig:
         user_agent="test-agent",
         log_level="INFO",
         reuters_rss_url=DEFAULT_REUTERS_RSS_URL,
+        investing_rss_url=DEFAULT_INVESTING_RSS_URL,
         ap_world_rss_url=DEFAULT_AP_WORLD_RSS_URL,
         ft_rss_url=DEFAULT_FT_RSS_URL,
         x_cookies_file=Path("data/x-cookies.json"),
@@ -47,28 +55,35 @@ class SourceRegistryTests(unittest.TestCase):
     def test_build_sources_supports_reuters_rss(self) -> None:
         sources = build_sources(make_config())
 
-        self.assertEqual(len(sources), 5)
+        self.assertEqual(len(sources), 6)
         self.assertTrue(any(isinstance(source, ReutersRSSSource) for source in sources))
         self.assertTrue(any(getattr(source, "source_id", "") == "rss:reuters" for source in sources))
+
+    def test_build_sources_supports_investing_rss(self) -> None:
+        sources = build_sources(make_config())
+
+        self.assertEqual(len(sources), 6)
+        self.assertTrue(any(isinstance(source, InvestingRSSSource) for source in sources))
+        self.assertTrue(any(getattr(source, "source_id", "") == "rss:investing" for source in sources))
 
     def test_build_sources_supports_ap_world_rss(self) -> None:
         sources = build_sources(make_config())
 
-        self.assertEqual(len(sources), 5)
+        self.assertEqual(len(sources), 6)
         self.assertTrue(any(isinstance(source, APWorldRSSSource) for source in sources))
         self.assertTrue(any(getattr(source, "source_id", "") == "rss:ap-world" for source in sources))
 
     def test_build_sources_supports_ft_rss(self) -> None:
         sources = build_sources(make_config())
 
-        self.assertEqual(len(sources), 5)
+        self.assertEqual(len(sources), 6)
         self.assertTrue(any(isinstance(source, FTRSSSource) for source in sources))
         self.assertTrue(any(getattr(source, "source_id", "") == "rss:ft" for source in sources))
 
     def test_build_sources_supports_x_kobeissi_letter(self) -> None:
         sources = build_sources(make_config())
 
-        self.assertEqual(len(sources), 5)
+        self.assertEqual(len(sources), 6)
         self.assertTrue(any(isinstance(source, XKobeissiLetterSource) for source in sources))
         self.assertTrue(any(getattr(source, "source_id", "") == "x:kobeissiletter" for source in sources))
 

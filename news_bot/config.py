@@ -13,6 +13,7 @@ DEFAULT_REUTERS_RSS_URL = (
     "https://news.google.com/rss/search?"
     "q=when:24h+allinurl:reuters.com&ceid=US:en&hl=en-US&gl=US"
 )
+DEFAULT_INVESTING_RSS_URL = "https://www.investing.com/rss/news_1.rss"
 DEFAULT_AP_WORLD_RSS_URL = "https://rss.noleron.com/apnews/topics/world-news"
 DEFAULT_FT_RSS_URL = "https://www.ft.com/rss/home/international"
 DEFAULT_X_KOBEISSI_URL = "https://x.com/KobeissiLetter"
@@ -137,6 +138,7 @@ class AppConfig:
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     reuters_rss_url: str = DEFAULT_REUTERS_RSS_URL
+    investing_rss_url: str = DEFAULT_INVESTING_RSS_URL
     ap_world_rss_url: str = DEFAULT_AP_WORLD_RSS_URL
     ft_rss_url: str = DEFAULT_FT_RSS_URL
     x_kobeissi_url: str = DEFAULT_X_KOBEISSI_URL
@@ -232,6 +234,8 @@ class AppConfig:
             or "https://api.openai.com/v1",
             reuters_rss_url=os.getenv("REUTERS_RSS_URL", DEFAULT_REUTERS_RSS_URL).strip()
             or DEFAULT_REUTERS_RSS_URL,
+            investing_rss_url=os.getenv("INVESTING_RSS_URL", DEFAULT_INVESTING_RSS_URL).strip()
+            or DEFAULT_INVESTING_RSS_URL,
             ap_world_rss_url=os.getenv("AP_WORLD_RSS_URL", DEFAULT_AP_WORLD_RSS_URL).strip()
             or DEFAULT_AP_WORLD_RSS_URL,
             ft_rss_url=os.getenv("FT_RSS_URL", DEFAULT_FT_RSS_URL).strip()

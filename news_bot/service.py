@@ -31,8 +31,8 @@ HANDLE_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 URL_PATTERN = re.compile(r"https?://\S+")
 HREF_URL_PATTERN = re.compile(r'href="(https?://[^"]+)"', flags=re.IGNORECASE)
 VIETNAM_TZ = timezone(timedelta(hours=7))
-WIRE_STORY_SOURCE_IDS = {"rss:reuters", "rss:ap-world", "rss:ft"}
-ATTRIBUTED_WIRE_SOURCE_IDS = {"rss:reuters", "rss:ap-world", "rss:ft"}
+WIRE_STORY_SOURCE_IDS = {"rss:reuters", "rss:investing", "rss:ap-world", "rss:ft"}
+ATTRIBUTED_WIRE_SOURCE_IDS = {"rss:reuters", "rss:investing", "rss:ap-world", "rss:ft"}
 
 
 def trim_message(text: str, limit: int = 4096) -> str:
@@ -428,6 +428,7 @@ def _clean_trump_summary_text(text: str) -> str:
     cleaned = _normalize_spaces(_drop_terminal_punctuation(text))
     cleaned = re.sub(r"\b[Tt]ổng thống\s+DONALD J\.?\s*TRUMP\b", "", cleaned).strip(" ,")
     cleaned = re.sub(r"\((?=[^)]*[A-ZÀ-Ỹ]{4,})[^)]*\)", "", cleaned).strip(" ,")
+    cleaned = re.sub(r"^\s*(?:Watch|See|Video|Xem)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(
         r"\b(thất bại|giả mạo|kẻ phản bội|người thất bại|rino|cực tả|cánh tả cực đoan)\b\s+",
         "",
@@ -435,6 +436,12 @@ def _clean_trump_summary_text(text: str) -> str:
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(r"\b(KẾ HOẠCH|KẾ HOẠCH MƯỜI ĐIỂM|GIẢ MẠO|TRÒ LỪA BỊP)\b", "", cleaned)
+    cleaned = re.sub(
+        r"(?:[:;,-]\s*)?(?:Watch|See|Video|Xem)\s*:\s*(?:[A-Za-zÀ-ỹ]+\s+){0,3}[A-Za-zÀ-ỹ]+$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
     cleaned = re.sub(r"(?:\s+|^)[A-Z]\.?$", "", cleaned).strip(" ,")
     cleaned = _normalize_spaces(cleaned.strip(" ,"))
     if not _is_meaningful_summary_text(cleaned):

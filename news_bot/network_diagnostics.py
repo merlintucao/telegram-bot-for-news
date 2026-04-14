@@ -27,6 +27,8 @@ def iter_probe_hosts(config: AppConfig) -> list[str]:
             add_url(feed_url)
     if "reuters_rss" in normalized_sources:
         add_url(config.reuters_rss_url)
+    if "investing_rss" in normalized_sources:
+        add_url(config.investing_rss_url)
     if "ap_world_rss" in normalized_sources:
         add_url(config.ap_world_rss_url)
     if "ft_rss" in normalized_sources:
