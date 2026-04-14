@@ -434,6 +434,28 @@ class ServiceTests(unittest.TestCase):
 
         self.assertIn("Posted: 15:00 07/04/2026", message)
 
+    def test_format_post_message_parses_x_style_timestamp(self) -> None:
+        post = SourcePost(
+            source_id="x:kobeissiletter",
+            source_name="The Kobeissi Letter",
+            id="story-x-time-1",
+            account_handle="KobeissiLetter",
+            created_at="Tue Apr 14 02:42:42 +0000 2026",
+            url="https://x.com/KobeissiLetter/status/1",
+            body_text="President Trump says talks may resume on Thursday.",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={"id": "story-x-time-1", "text": "President Trump says talks may resume on Thursday."},
+        )
+
+        message = format_post_message(
+            post,
+            translated_text="Một vòng đàm phán mới giữa Mỹ và Iran có thể được tổ chức vào thứ Năm.",
+        )
+
+        self.assertIn("Posted: 09:42 14/04/2026", message)
+
     def test_format_post_message_summarizes_media_without_listing_urls(self) -> None:
         post = SourcePost(
             source_id="truthsocial:realDonaldTrump",

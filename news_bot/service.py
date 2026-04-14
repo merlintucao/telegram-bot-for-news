@@ -87,7 +87,10 @@ def _format_posted_at(created_at: str) -> str:
         normalized = value.replace("Z", "+00:00")
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
-        return created_at
+        try:
+            parsed = datetime.strptime(value, "%a %b %d %H:%M:%S %z %Y")
+        except ValueError:
+            return created_at
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     localized = parsed.astimezone(VIETNAM_TZ)
