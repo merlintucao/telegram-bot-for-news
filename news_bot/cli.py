@@ -12,9 +12,10 @@ from .ap import APWorldRSSSource
 from .config import AppConfig
 from .cookies import load_cookie_jar
 from .filtering import build_post_filter
+from .network_diagnostics import probe_hosts, summarize_status_network_issue
 from .routing import build_router
 from .service import NewsBotService, _build_translator, format_post_caption, format_post_message
-from .storage import StateStore
+from .storage import SourceStatusRecord, StateStore
 from .source_types import SourceError
 from .sources import build_sources
 from .telegram import TelegramError, TelegramSender
@@ -44,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-network",
         action="store_true",
         help="Skip Truth Social network probes during the doctor command.",
+    )
+    parser.add_argument(
+        "--network-only",
+        action="store_true",
+        help="Run only network connectivity probes during the doctor command.",
     )
     parser.add_argument(
         "--status-limit",
@@ -82,7 +88,18 @@ def configure_logging(level: str) -> None:
     )
 
 
-def run_doctor(config: AppConfig, skip_network: bool) -> int:
+def _summarize_status_network_issue(source_statuses: Iterable[SourceStatusRecord]) -> str | None:
+    statuses = list(source_statuses)
+    if not statuses:
+        return None
+    if any(status.consecutive_failures <= 0 for status in statuses):
+        return None
+    return summarize_status_network_issue(
+        status.last_error.detail if status.last_error else None for status in statuses
+    )
+
+
+def run_doctor(config: AppConfig, skip_network: bool, network_only: bool = False) -> int:
     ok = True
 
     print("Doctor report")
@@ -256,7 +273,16 @@ def run_doctor(config: AppConfig, skip_network: bool) -> int:
         return 1
 
     if skip_network:
-        print("- Source probes: skipped (--skip-network)")
+        print("- Network and source probes: skipped (--skip-network)")
+        return 0 if ok else 1
+
+    network_ok, network_lines = probe_hosts(config)
+    for line in network_lines:
+        print(line)
+    ok = ok and network_ok
+
+    if network_only:
+        print("- Source probes: skipped (--network-only)")
         return 0 if ok else 1
 
     for source in sources:
@@ -278,6 +304,7 @@ def run_status(config: AppConfig, limit: int, as_json: bool = False) -> int:
     store = StateStore(config.state_db_path)
     recent_runs = store.get_recent_runs(limit=limit)
     source_statuses = store.get_source_statuses(filtered_limit=limit)
+    health_hint = _summarize_status_network_issue(source_statuses)
 
     if as_json:
         print(
@@ -285,6 +312,7 @@ def run_status(config: AppConfig, limit: int, as_json: bool = False) -> int:
                 {
                     "runs": [asdict(run) for run in recent_runs],
                     "sources": [asdict(status) for status in source_statuses],
+                    "health_hint": health_hint,
                 },
                 ensure_ascii=True,
                 indent=2,
@@ -310,6 +338,9 @@ def run_status(config: AppConfig, limit: int, as_json: bool = False) -> int:
     if not source_statuses:
         print("- Sources: none recorded yet")
         return 0
+
+    if health_hint:
+        print(health_hint)
 
     print("- Sources:")
     for status in source_statuses:
@@ -576,6 +607,7 @@ def run_command(
     command: str,
     dry_run: bool,
     skip_network: bool,
+    network_only: bool,
     status_limit: int,
     json_output: bool,
     notify_target: str,
@@ -583,7 +615,7 @@ def run_command(
     notify_source: str,
 ) -> int:
     if command == "doctor":
-        return run_doctor(config, skip_network=skip_network)
+        return run_doctor(config, skip_network=skip_network, network_only=network_only)
     if command == "status":
         return run_status(config, limit=status_limit, as_json=json_output)
     if command == "notify":
@@ -647,6 +679,7 @@ def main(argv: list[str] | None = None) -> int:
             command=args.command,
             dry_run=args.dry_run,
             skip_network=args.skip_network,
+            network_only=args.network_only,
             status_limit=args.status_limit,
             json_output=args.json,
             notify_target=args.notify_target,

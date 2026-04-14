@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
-from news_bot.cli import build_notify_message, run_doctor, run_notify, run_send_latest_ap
+from news_bot.cli import build_notify_message, run_doctor, run_notify, run_send_latest_ap, run_status
 from news_bot.config import AppConfig
 from news_bot.models import SourcePost
+from news_bot.storage import RunRecord, SourceEventRecord, SourceStatusRecord
 from news_bot.translate import TranslationError
 
 
@@ -81,6 +84,22 @@ class FakeTranslator:
 
     def translate(self, text: str) -> str:
         return self.translated_text
+
+
+class FakeStatusStore:
+    def __init__(
+        self,
+        runs: list[RunRecord] | None = None,
+        statuses: list[SourceStatusRecord] | None = None,
+    ) -> None:
+        self.runs = runs or []
+        self.statuses = statuses or []
+
+    def get_recent_runs(self, limit: int = 3) -> tuple[RunRecord, ...]:
+        return tuple(self.runs[:limit])
+
+    def get_source_statuses(self, filtered_limit: int = 3) -> tuple[SourceStatusRecord, ...]:
+        return tuple(self.statuses)
 
 
 class CLITests(unittest.TestCase):
@@ -198,6 +217,180 @@ class CLITests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("X auth mode: cookies", output.getvalue())
         self.assertIn("X cookies: missing (required in cookies mode)", output.getvalue())
+
+    def test_run_doctor_reports_network_probe_failure_summary(self) -> None:
+        config = make_config()
+        output = io.StringIO()
+
+        with (
+            mock.patch("news_bot.cli.build_sources", return_value=[]),
+            mock.patch(
+                "news_bot.cli.probe_hosts",
+                return_value=(
+                    False,
+                    [
+                        "- Network probes:",
+                        "  truthsocial.com: dns failed ([Errno 8] nodename nor servname provided, or not known)",
+                        "  likely cause: DNS resolution failure in this runtime or machine environment",
+                    ],
+                ),
+            ),
+            redirect_stdout(output),
+        ):
+            exit_code = run_doctor(config, skip_network=False)
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("Network probes:", output.getvalue())
+        self.assertIn("likely cause: DNS resolution failure", output.getvalue())
+
+    def test_run_doctor_skip_network_skips_network_probe_summary(self) -> None:
+        config = make_config()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            exit_code = run_doctor(config, skip_network=True)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Network and source probes: skipped (--skip-network)", output.getvalue())
+
+    def test_run_doctor_network_only_skips_source_probes(self) -> None:
+        config = make_config()
+        output = io.StringIO()
+
+        with (
+            mock.patch("news_bot.cli.build_sources", return_value=[]),
+            mock.patch(
+                "news_bot.cli.probe_hosts",
+                return_value=(True, ["- Network probes:", "  truthsocial.com: dns ok, tcp ok"]),
+            ),
+            redirect_stdout(output),
+        ):
+            exit_code = run_doctor(config, skip_network=False, network_only=True)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Network probes:", output.getvalue())
+        self.assertIn("Source probes: skipped (--network-only)", output.getvalue())
+
+    def test_run_status_reports_network_wide_dns_hint(self) -> None:
+        config = make_config()
+        output = io.StringIO()
+        dns_error = SourceEventRecord(
+            source_key="rss:reuters",
+            source_name="Reuters",
+            event_type="error",
+            status_id=None,
+            post_url=None,
+            detail="RSS request failed: [Errno 8] nodename nor servname provided, or not known",
+            created_at="2026-04-14T01:00:00+00:00",
+            run_id=1,
+        )
+        statuses = [
+            SourceStatusRecord(
+                source_key="rss:reuters",
+                source_name="Reuters",
+                checkpoint_id=None,
+                checkpoint_updated_at=None,
+                last_delivered=None,
+                last_bootstrap=None,
+                last_error=dns_error,
+                recent_filtered=(),
+                consecutive_failures=5,
+                last_success_at=None,
+                last_alerted_at=None,
+            ),
+            SourceStatusRecord(
+                source_key="rss:ft",
+                source_name="FT",
+                checkpoint_id=None,
+                checkpoint_updated_at=None,
+                last_delivered=None,
+                last_bootstrap=None,
+                last_error=SourceEventRecord(
+                    source_key="rss:ft",
+                    source_name="FT",
+                    event_type="error",
+                    status_id=None,
+                    post_url=None,
+                    detail="RSS request failed: [Errno 8] nodename nor servname provided, or not known",
+                    created_at="2026-04-14T01:00:00+00:00",
+                    run_id=1,
+                ),
+                recent_filtered=(),
+                consecutive_failures=5,
+                last_success_at=None,
+                last_alerted_at=None,
+            ),
+        ]
+
+        with (
+            mock.patch("news_bot.cli.StateStore", return_value=FakeStatusStore(statuses=statuses)),
+            redirect_stdout(output),
+        ):
+            exit_code = run_status(config, limit=3)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Health hint: all sources are currently failing with DNS resolution errors", output.getvalue())
+
+    def test_run_status_json_includes_network_wide_dns_hint(self) -> None:
+        config = make_config()
+        output = io.StringIO()
+        statuses = [
+            SourceStatusRecord(
+                source_key="rss:reuters",
+                source_name="Reuters",
+                checkpoint_id=None,
+                checkpoint_updated_at=None,
+                last_delivered=None,
+                last_bootstrap=None,
+                last_error=SourceEventRecord(
+                    source_key="rss:reuters",
+                    source_name="Reuters",
+                    event_type="error",
+                    status_id=None,
+                    post_url=None,
+                    detail="RSS request failed: [Errno 8] nodename nor servname provided, or not known",
+                    created_at="2026-04-14T01:00:00+00:00",
+                    run_id=1,
+                ),
+                recent_filtered=(),
+                consecutive_failures=4,
+                last_success_at=None,
+                last_alerted_at=None,
+            ),
+            SourceStatusRecord(
+                source_key="rss:ft",
+                source_name="FT",
+                checkpoint_id=None,
+                checkpoint_updated_at=None,
+                last_delivered=None,
+                last_bootstrap=None,
+                last_error=SourceEventRecord(
+                    source_key="rss:ft",
+                    source_name="FT",
+                    event_type="error",
+                    status_id=None,
+                    post_url=None,
+                    detail="RSS request failed: [Errno 8] nodename nor servname provided, or not known",
+                    created_at="2026-04-14T01:00:00+00:00",
+                    run_id=1,
+                ),
+                recent_filtered=(),
+                consecutive_failures=4,
+                last_success_at=None,
+                last_alerted_at=None,
+            ),
+        ]
+
+        with (
+            mock.patch("news_bot.cli.StateStore", return_value=FakeStatusStore(statuses=statuses)),
+            redirect_stdout(output),
+        ):
+            exit_code = run_status(config, limit=3, as_json=True)
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(output.getvalue())
+        self.assertIn("health_hint", payload)
+        self.assertIn("all sources are currently failing with DNS resolution errors", payload["health_hint"])
 
     def test_build_notify_message_uses_custom_text_when_present(self) -> None:
         self.assertEqual(

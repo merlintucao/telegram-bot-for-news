@@ -14,6 +14,7 @@ from .config import AppConfig
 from .filtering import PostFilter, build_post_filter
 from .image_summary import ImageSummarizer, build_image_summarizer, ImageSummaryError
 from .models import MediaAttachment, SourcePost
+from .network_diagnostics import has_global_dns_outage, looks_like_dns_resolution_failure
 from .routing import SourceRouter, build_router
 from .sources import SourceAdapter, build_sources
 from .storage import SourceHealthRecord, StateStore
@@ -21,6 +22,10 @@ from .telegram import TelegramError, TelegramSender
 from .translate import GoogleTranslateTranslator, TranslationError, Translator
 
 LOGGER = logging.getLogger(__name__)
+GLOBAL_DNS_FAILURE_MESSAGE = (
+    "Global DNS resolution failure detected for configured source hosts; "
+    "skipping remaining source polls in this cycle."
+)
 
 HANDLE_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 URL_PATTERN = re.compile(r"https?://\S+")
@@ -1296,9 +1301,10 @@ class NewsBotService:
         sources_processed = 0
         failed_sources = 0
         failure_messages: list[str] = []
+        global_dns_outage_detected = False
 
         try:
-            for source in self.sources:
+            for source_index, source in enumerate(self.sources):
                 try:
                     result = self._run_source_with_retries(source, dry_run=dry_run, run_id=run_id)
                 except Exception as exc:
@@ -1322,6 +1328,37 @@ class NewsBotService:
                     failure_messages.append(f"{source.source_id}: {error_detail}")
                     if not self.config.continue_on_source_error:
                         raise
+                    if (
+                        not global_dns_outage_detected
+                        and looks_like_dns_resolution_failure(error_detail)
+                        and has_global_dns_outage(self.config)
+                    ):
+                        global_dns_outage_detected = True
+                        LOGGER.warning(GLOBAL_DNS_FAILURE_MESSAGE)
+                        for skipped_source in self.sources[source_index + 1 :]:
+                            self.store.log_source_event(
+                                run_id=run_id,
+                                source_key=skipped_source.source_id,
+                                source_name=skipped_source.source_name,
+                                event_type="error",
+                                detail=GLOBAL_DNS_FAILURE_MESSAGE,
+                            )
+                            if not dry_run:
+                                health = self.store.record_source_failure(
+                                    skipped_source.source_id,
+                                    detail=GLOBAL_DNS_FAILURE_MESSAGE,
+                                )
+                                self._maybe_send_source_failure_alert(
+                                    source=skipped_source,
+                                    run_id=run_id,
+                                    health=health,
+                                    error_detail=GLOBAL_DNS_FAILURE_MESSAGE,
+                                )
+                            failed_sources += 1
+                            failure_messages.append(
+                                f"{skipped_source.source_id}: {GLOBAL_DNS_FAILURE_MESSAGE}"
+                            )
+                        break
                     LOGGER.warning(
                         "Source %s failed after retries; continuing with remaining sources: %s",
                         source.source_id,

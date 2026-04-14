@@ -7,6 +7,7 @@ import unittest
 from contextlib import redirect_stdout
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from news_bot.cli import run_status
 from news_bot.config import AppConfig
@@ -2408,6 +2409,88 @@ class ServiceTests(unittest.TestCase):
             self.assertIn("truthsocial:realDonaldTrump", recent_runs[0].error_message)
             self.assertEqual(source_statuses["truthsocial:realDonaldTrump"].consecutive_failures, 1)
             self.assertEqual(source_statuses["rss:ap"].consecutive_failures, 0)
+
+    def test_global_dns_outage_skips_remaining_sources_in_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=("truthsocial_trump", "ap_world_rss"),
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_fallback_feed_urls=config.truthsocial_fallback_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+                continue_on_source_error=True,
+                source_retry_attempts=2,
+                source_retry_backoff_seconds=0,
+            )
+            store = StateStore(db_path)
+            failing = FailingClient(
+                SourceError("Truth Social request failed: [Errno 8] nodename nor servname provided, or not known")
+            )
+            healthy = FakeClient(
+                [[SourcePost(
+                    source_id="rss:ap-world",
+                    source_name="AP News",
+                    id="story-9",
+                    account_handle="AP News",
+                    created_at="2026-04-07T09:00:00Z",
+                    url="https://example.com/ap/9",
+                    body_text="wire story",
+                    is_reply=False,
+                    is_reblog=False,
+                    media_attachments=(),
+                    raw_payload={"id": "story-9"},
+                )]],
+                source_id="rss:ap-world",
+                source_name="AP News",
+            )
+            sender = FakeSender()
+            service = NewsBotService(
+                config,
+                store,
+                [failing, healthy],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                sleep_fn=lambda seconds: None,
+            )
+
+            with mock.patch("news_bot.service.has_global_dns_outage", return_value=True):
+                summary = service.run_once()
+
+            recent_runs = store.get_recent_runs(limit=1)
+            source_statuses = {
+                status.source_key: status for status in store.get_source_statuses(filtered_limit=1)
+            }
+
+            self.assertEqual(summary.failed_sources, 2)
+            self.assertEqual(summary.sources_processed, 0)
+            self.assertEqual(summary.sent_count, 0)
+            self.assertEqual(healthy.calls, [])
+            self.assertEqual(sender.deliveries, [])
+            self.assertEqual(recent_runs[0].status, "error")
+            self.assertIn("Global DNS resolution failure detected", recent_runs[0].error_message)
+            self.assertEqual(source_statuses["truthsocial:realDonaldTrump"].consecutive_failures, 1)
+            self.assertEqual(source_statuses["rss:ap-world"].consecutive_failures, 1)
 
     def test_failure_alert_triggers_once_per_streak_and_resets_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
