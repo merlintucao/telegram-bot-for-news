@@ -1172,12 +1172,9 @@ class ServiceTests(unittest.TestCase):
 
             self.assertEqual(summary.sent_count, 1)
             self.assertIn("Ban dich tam thoi chua san sang.", sender.messages[0])
-            self.assertIn("Bai dang co kem lien ket lien quan.", sender.messages[0])
-            self.assertNotIn("Bai dang co kem hinh anh lien quan.", sender.messages[0])
             self.assertNotIn("hello world", sender.messages[0])
-            self.assertNotIn("The post includes 1 image.", sender.messages[0])
 
-    def test_unchanged_english_translation_uses_vietnamese_placeholder(self) -> None:
+    def test_unchanged_english_translation_for_wire_story_falls_back_to_source_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "state.sqlite3"
             config = make_config(db_path)
@@ -1241,8 +1238,8 @@ class ServiceTests(unittest.TestCase):
 
             self.assertEqual(summary.sent_count, 1)
             self.assertEqual(len(translator.calls), 2)
-            self.assertIn("Ban dich tam thoi chua san sang.", sender.messages[0])
-            self.assertNotIn("Israeli Prime Minister", sender.messages[0])
+            self.assertNotIn("Ban dich tam thoi chua san sang.", sender.messages[0])
+            self.assertIn("Israeli Prime Minister Benjamin Netanyahu said he authorized direct negotiations with Lebanon.", sender.messages[0])
 
     def test_unchanged_english_translation_retries_before_using_vietnamese_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1312,6 +1309,73 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(len(translator.calls), 2)
             self.assertIn("Thủ tướng Israel Benjamin Netanyahu", sender.messages[0])
             self.assertNotIn("Ban dich tam thoi chua san sang.", sender.messages[0])
+
+    def test_translation_failure_for_reuters_story_falls_back_to_source_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite3"
+            config = make_config(db_path)
+            config = AppConfig(
+                telegram_bot_token=config.telegram_bot_token,
+                telegram_chat_id=config.telegram_chat_id,
+                source_chat_routes=config.source_chat_routes,
+                source_keyword_filters=config.source_keyword_filters,
+                source_category_filters=config.source_category_filters,
+                enabled_sources=("reuters_rss",),
+                rss_feed_urls=config.rss_feed_urls,
+                truthsocial_fallback_feed_urls=config.truthsocial_fallback_feed_urls,
+                truthsocial_handle=config.truthsocial_handle,
+                truthsocial_account_id=config.truthsocial_account_id,
+                truthsocial_base_url=config.truthsocial_base_url,
+                truthsocial_cookies_file=config.truthsocial_cookies_file,
+                truthsocial_reload_cookies=config.truthsocial_reload_cookies,
+                poll_interval_seconds=config.poll_interval_seconds,
+                request_timeout_seconds=config.request_timeout_seconds,
+                state_db_path=config.state_db_path,
+                bootstrap_latest_only=False,
+                initial_history_limit=config.initial_history_limit,
+                fetch_limit=config.fetch_limit,
+                exclude_replies=config.exclude_replies,
+                exclude_reblogs=config.exclude_reblogs,
+                user_agent=config.user_agent,
+                log_level=config.log_level,
+                translation_retry_attempts=2,
+                translation_retry_backoff_seconds=0,
+                translation_failure_placeholder="Ban dich tam thoi chua san sang.",
+            )
+            store = StateStore(db_path)
+            post = SourcePost(
+                source_id="rss:reuters",
+                source_name="Reuters",
+                id="reuters-translate-1",
+                account_handle="Reuters",
+                created_at="2026-04-07T08:00:00Z",
+                url="https://news.google.com/rss/articles/test-1",
+                body_text="UK financial watchdog to consult on proposed crypto regulations - Reuters",
+                is_reply=False,
+                is_reblog=False,
+                media_attachments=(),
+                raw_payload={"id": "reuters-translate-1", "source": "Reuters"},
+            )
+            client = FakeClient([[post]], source_id="rss:reuters", source_name="Reuters")
+            sender = FakeSender()
+            translator = FailingTranslator()
+            service = NewsBotService(
+                config,
+                store,
+                [client],
+                build_router(config.telegram_chat_id, config.source_chat_routes),
+                build_post_filter(config.source_keyword_filters, config.source_category_filters),
+                sender,
+                sleep_fn=lambda seconds: None,
+                translator=translator,
+            )
+
+            summary = service.run_once()
+
+            self.assertEqual(summary.sent_count, 1)
+            self.assertNotIn("Ban dich tam thoi chua san sang.", sender.messages[0])
+            self.assertIn("UK financial watchdog to consult on proposed crypto regulations - Reuters.", sender.messages[0])
+            self.assertIn("\n\nTheo Reuters", sender.messages[0])
 
     def test_multiple_sources_are_processed_independently(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

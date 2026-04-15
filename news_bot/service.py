@@ -1735,6 +1735,8 @@ class NewsBotService:
             context=f"post {post.id}",
         )
         if translated_text is None:
+            if post.source_id in WIRE_STORY_SOURCE_IDS:
+                return None
             return self.config.translation_failure_placeholder.strip() or None
         return translated_text
 
