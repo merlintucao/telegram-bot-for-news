@@ -141,6 +141,10 @@ class RSSFeedSource:
             raise SourceError(f"RSS HTTP {exc.code} for {self.feed_url}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise SourceError(f"RSS request failed for {self.feed_url}: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise SourceError(f"RSS request timed out for {self.feed_url}: {exc}") from exc
+        except OSError as exc:
+            raise SourceError(f"RSS request failed for {self.feed_url}: {exc}") from exc
 
         return self._parse_feed(xml_text)
 

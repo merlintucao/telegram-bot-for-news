@@ -124,4 +124,8 @@ class APWorldRSSSource(RSSFeedSource):
             raise SourceError(f"AP article HTTP {exc.code} for {url}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise SourceError(f"AP article request failed for {url}: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise SourceError(f"AP article request timed out for {url}: {exc}") from exc
+        except OSError as exc:
+            raise SourceError(f"AP article request failed for {url}: {exc}") from exc
         return _extract_ap_summary_from_html(html_text)

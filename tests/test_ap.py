@@ -7,6 +7,7 @@ from unittest.mock import patch
 from news_bot.ap import APWorldRSSSource, _extract_ap_summary_from_html
 from news_bot.config import AppConfig, DEFAULT_AP_WORLD_RSS_URL
 from news_bot.models import SourcePost
+from news_bot.source_types import SourceError
 
 
 def make_config() -> AppConfig:
@@ -114,6 +115,49 @@ class APWorldRSSSourceTests(unittest.TestCase):
             enriched.body_text,
             "Israeli Prime Minister Benjamin Netanyahu says he has authorized direct negotiations with Lebanon as soon as possible.",
         )
+
+    def test_fetch_posts_wraps_feed_timeouts_as_source_errors(self) -> None:
+        source = APWorldRSSSource(make_config())
+
+        with patch("news_bot.rss.urllib.request.urlopen", side_effect=TimeoutError("The read operation timed out")):
+            with self.assertRaisesRegex(
+                SourceError,
+                r"RSS request timed out for https://rss\.noleron\.com/apnews/topics/world-news: The read operation timed out",
+            ):
+                source.fetch_posts()
+
+    def test_fetch_posts_ignores_ap_article_summary_timeout(self) -> None:
+        source = APWorldRSSSource(make_config())
+        post = SourcePost(
+            source_id="rss:ap-world",
+            source_name="AP News",
+            id="ap-1",
+            account_handle="AP News",
+            created_at="2026-04-09T16:05:14Z",
+            url="https://apnews.com/article/test-story",
+            body_text="Netanyahu authorizes direct talks with Lebanon ‘as soon as possible’",
+            is_reply=False,
+            is_reblog=False,
+            media_attachments=(),
+            raw_payload={
+                "title": "Netanyahu authorizes direct talks with Lebanon ‘as soon as possible’",
+                "link": "https://apnews.com/article/test-story",
+                "description": "",
+            },
+        )
+
+        with patch("news_bot.ap.RSSFeedSource.fetch_posts", return_value=[post]):
+            with patch.object(
+                APWorldRSSSource,
+                "_fetch_article_summary",
+                side_effect=SourceError(
+                    "AP article request timed out for https://apnews.com/article/test-story: The read operation timed out"
+                ),
+            ):
+                posts = source.fetch_posts()
+
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0].body_text, post.body_text)
 
 
 if __name__ == "__main__":

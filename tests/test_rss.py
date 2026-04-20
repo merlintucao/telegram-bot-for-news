@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from news_bot.config import AppConfig
 from news_bot.rss import RSSFeedSource
+from news_bot.source_types import SourceError
 
 
 def make_config() -> AppConfig:
@@ -128,6 +130,16 @@ class RSSFeedSourceTests(unittest.TestCase):
             "https://truthsocial.com/@realDonaldTrump/116372694697146221",
         )
         self.assertEqual(post.raw_payload["originalId"], "116372694697146221")
+
+    def test_fetch_posts_wraps_timeout_errors_as_source_errors(self) -> None:
+        source = RSSFeedSource(make_config(), "https://example.com/feed.xml")
+
+        with patch("news_bot.rss.urllib.request.urlopen", side_effect=TimeoutError("The read operation timed out")):
+            with self.assertRaisesRegex(
+                SourceError,
+                r"RSS request timed out for https://example\.com/feed\.xml: The read operation timed out",
+            ):
+                source.fetch_posts()
 
 
 if __name__ == "__main__":
