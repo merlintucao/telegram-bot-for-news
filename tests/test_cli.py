@@ -283,7 +283,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("Network probes:", output.getvalue())
         self.assertIn("Source probes: skipped (--network-only)", output.getvalue())
 
-    def test_run_status_reports_network_wide_dns_hint(self) -> None:
+    def test_run_status_human_output_omits_network_wide_dns_hint(self) -> None:
         config = make_config()
         output = io.StringIO()
         dns_error = SourceEventRecord(
@@ -336,12 +336,14 @@ class CLITests(unittest.TestCase):
 
         with (
             mock.patch("news_bot.cli.StateStore", return_value=FakeStatusStore(statuses=statuses)),
+            mock.patch("news_bot.cli._count_running_bot_sessions", return_value=0),
             redirect_stdout(output),
         ):
             exit_code = run_status(config, limit=3)
 
         self.assertEqual(exit_code, 0)
-        self.assertIn("Health hint: all sources are currently failing with DNS resolution errors", output.getvalue())
+        self.assertNotIn("Health hint:", output.getvalue())
+        self.assertNotIn("all sources are currently failing with DNS resolution errors", output.getvalue())
 
     def test_run_status_json_includes_network_wide_dns_hint(self) -> None:
         config = make_config()
@@ -480,6 +482,7 @@ class CLITests(unittest.TestCase):
 
         with (
             mock.patch("news_bot.cli.StateStore", return_value=FakeStatusStore(statuses=statuses)),
+            mock.patch("news_bot.cli._count_running_bot_sessions", return_value=2),
             mock.patch(
                 "news_bot.cli.build_sources",
                 return_value=(
@@ -493,12 +496,13 @@ class CLITests(unittest.TestCase):
 
         text = output.getvalue()
         self.assertEqual(exit_code, 0)
-        self.assertIn("truthsocial:realDonaldTrump (Truth Social): on", text)
-        self.assertIn("last_sent=truth-1 at=2026-04-14T01:00:00+00:00 url=https://truthsocial.com/@realDonaldTrump/1", text)
-        self.assertIn("rss:investing (Investing): failed", text)
-        self.assertIn("last_error at=2026-04-14T01:01:00+00:00 detail=RSS request failed", text)
-        self.assertIn("rss:ft (FT): off", text)
-        self.assertIn("last_sent=ft-1 at=2026-04-13T01:00:00+00:00 url=https://www.ft.com/content/ft-1", text)
+        self.assertIn("Bot sessions running: 2", text)
+        self.assertIn("on     truthsocial:realDonaldTrump", text)
+        self.assertIn("last_sent=2026-04-14T01:00:00+00:00 truth-1", text)
+        self.assertIn("failed rss:investing", text)
+        self.assertNotIn("error=RSS request failed", text)
+        self.assertIn("off    rss:ft", text)
+        self.assertIn("last_sent=2026-04-13T01:00:00+00:00 ft-1", text)
 
     def test_build_notify_message_uses_custom_text_when_present(self) -> None:
         self.assertEqual(

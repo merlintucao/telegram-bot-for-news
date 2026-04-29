@@ -4,6 +4,7 @@ import argparse
 import fnmatch
 import json
 import logging
+import subprocess
 import sys
 import time
 from dataclasses import asdict, replace
@@ -107,15 +108,37 @@ def _source_health_label(status: SourceStatusRecord | None, is_enabled: bool) ->
     return "on"
 
 
-def _source_last_sent_line(status: SourceStatusRecord | None) -> str:
+def _shorten_text(value: str, limit: int = 90) -> str:
+    cleaned = " ".join(value.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3].rstrip() + "..."
+
+
+def _source_last_sent_value(status: SourceStatusRecord | None) -> str:
     if status is None or status.last_delivered is None:
-        return "last_sent=<none>"
+        return "<none>"
 
     delivered = status.last_delivered
-    line = f"last_sent={delivered.status_id} at={delivered.created_at}"
-    if delivered.post_url:
-        line += f" url={delivered.post_url}"
-    return line
+    return _shorten_text(f"{delivered.created_at} {delivered.status_id}", limit=100)
+
+
+def _count_running_bot_sessions() -> int | None:
+    try:
+        result = subprocess.run(
+            ["ps", "-ax", "-o", "command="],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+    return sum(
+        1
+        for line in result.stdout.splitlines()
+        if "-m news_bot run" in line
+    )
 
 
 def run_doctor(config: AppConfig, skip_network: bool, network_only: bool = False) -> int:
@@ -342,26 +365,26 @@ def run_status(config: AppConfig, limit: int, as_json: bool = False) -> int:
         return 0
 
     print("Status report")
+    running_sessions = _count_running_bot_sessions()
+    if running_sessions is None:
+        print("- Bot sessions running: unknown")
+    else:
+        print(f"- Bot sessions running: {running_sessions}")
+
     if not recent_runs:
         print("- Runs: none recorded yet")
     else:
-        print("- Recent runs:")
-        for run in recent_runs:
-            dry_run_suffix = " dry-run" if run.dry_run else ""
-            error_suffix = f" error={run.error_message}" if run.error_message else ""
-            print(
-                "  "
-                f"{run.started_at} status={run.status}{dry_run_suffix} "
-                f"fetched={run.fetched_count} sent={run.sent_count} "
-                f"filtered={run.filtered_count} sources={run.sources_processed}{error_suffix}"
-            )
+        latest_run = recent_runs[0]
+        dry_run_suffix = " dry-run" if latest_run.dry_run else ""
+        print(
+            "- Latest run: "
+            f"{latest_run.status}{dry_run_suffix} at={latest_run.started_at} "
+            f"sent={latest_run.sent_count} sources={latest_run.sources_processed}"
+        )
 
     if not source_statuses:
         print("- Sources: none recorded yet")
         return 0
-
-    if health_hint:
-        print(health_hint)
 
     status_by_source = {status.source_key: status for status in source_statuses}
     try:
@@ -378,87 +401,17 @@ def run_status(config: AppConfig, limit: int, as_json: bool = False) -> int:
         if status.source_key not in enabled_source_names
     )
 
-    print("- Source health:")
+    print("- Sources:")
     for source_key in source_keys:
         status = status_by_source.get(source_key)
         source_name = enabled_source_names.get(source_key)
         if source_name is None and status is not None:
             source_name = status.source_name
         label = _source_health_label(status, source_key in enabled_source_names)
-        print(f"  {source_key} ({source_name or 'unknown'}): {label}")
-        print(f"    {_source_last_sent_line(status)}")
-        if label == "failed" and status is not None and status.last_error is not None:
-            error_line = f"last_error at={status.last_error.created_at}"
-            if status.last_error.detail:
-                error_line += f" detail={status.last_error.detail}"
-            print(f"    {error_line}")
-
-    print("- Source details:")
-    for status in source_statuses:
-        detail_state = _source_health_label(
-            status,
-            status.source_key in enabled_source_names,
+        print(
+            f"  {label:<6} {source_key:<30} "
+            f"last_sent={_source_last_sent_value(status)}"
         )
-        print(f"  {status.source_key} ({status.source_name}) status={detail_state}")
-        if status.checkpoint_id:
-            print(
-                "    "
-                f"checkpoint={status.checkpoint_id} updated_at={status.checkpoint_updated_at}"
-            )
-        else:
-            print("    checkpoint=<none>")
-
-        if status.last_delivered:
-            delivered = status.last_delivered
-            delivered_line = (
-                f"last_delivered={delivered.status_id} at={delivered.created_at}"
-            )
-            if delivered.post_url:
-                delivered_line += f" url={delivered.post_url}"
-            print(f"    {delivered_line}")
-        elif status.last_bootstrap:
-            bootstrap = status.last_bootstrap
-            bootstrap_line = (
-                f"last_bootstrap={bootstrap.status_id} at={bootstrap.created_at}"
-            )
-            if bootstrap.post_url:
-                bootstrap_line += f" url={bootstrap.post_url}"
-            print(f"    {bootstrap_line}")
-        else:
-            print("    last_delivered=<none>")
-
-        if status.last_error:
-            error = status.last_error
-            error_line = f"last_error at={error.created_at}"
-            if error.detail:
-                error_line += f" detail={error.detail}"
-            print(f"    {error_line}")
-        else:
-            print("    last_error=<none>")
-
-        if status.consecutive_failures:
-            health_line = f"health=degraded consecutive_failures={status.consecutive_failures}"
-            if status.last_success_at:
-                health_line += f" last_success_at={status.last_success_at}"
-            if status.last_alerted_at:
-                health_line += f" last_alerted_at={status.last_alerted_at}"
-            print(f"    {health_line}")
-        else:
-            health_line = "health=ok"
-            if status.last_success_at:
-                health_line += f" last_success_at={status.last_success_at}"
-            print(f"    {health_line}")
-
-        if status.recent_filtered:
-            print("    recent_filtered:")
-            for event in status.recent_filtered:
-                detail = f" reason={event.detail}" if event.detail else ""
-                print(
-                    "      "
-                    f"{event.status_id} at={event.created_at}{detail}"
-                )
-        else:
-            print("    recent_filtered=<none>")
 
     return 0
 
