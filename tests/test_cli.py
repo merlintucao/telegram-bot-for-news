@@ -78,6 +78,18 @@ class FakeAPSource:
         raise NotImplementedError
 
 
+class FakeSource:
+    def __init__(self, source_id: str, source_name: str) -> None:
+        self.source_id = source_id
+        self.source_name = source_name
+
+    def fetch_posts(self, since_id: str | None = None, limit: int | None = None) -> list[SourcePost]:  # pragma: no cover
+        raise NotImplementedError
+
+    def probe(self):  # pragma: no cover
+        raise NotImplementedError
+
+
 class FakeTranslator:
     def __init__(self, translated_text: str) -> None:
         self.translated_text = translated_text
@@ -391,6 +403,102 @@ class CLITests(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertIn("health_hint", payload)
         self.assertIn("all sources are currently failing with DNS resolution errors", payload["health_hint"])
+
+    def test_run_status_terminal_reports_on_failed_off_and_last_sent(self) -> None:
+        config = make_config()
+        output = io.StringIO()
+        delivered = SourceEventRecord(
+            source_key="truthsocial:realDonaldTrump",
+            source_name="Truth Social",
+            event_type="delivered",
+            status_id="truth-1",
+            post_url="https://truthsocial.com/@realDonaldTrump/1",
+            detail="delivered to 1 chat(s)",
+            created_at="2026-04-14T01:00:00+00:00",
+            run_id=1,
+        )
+        failed_error = SourceEventRecord(
+            source_key="rss:investing",
+            source_name="Investing",
+            event_type="error",
+            status_id=None,
+            post_url=None,
+            detail="RSS request failed",
+            created_at="2026-04-14T01:01:00+00:00",
+            run_id=1,
+        )
+        statuses = [
+            SourceStatusRecord(
+                source_key="truthsocial:realDonaldTrump",
+                source_name="Truth Social",
+                checkpoint_id="truth-1",
+                checkpoint_updated_at="2026-04-14T01:00:00+00:00",
+                last_delivered=delivered,
+                last_bootstrap=None,
+                last_error=None,
+                recent_filtered=(),
+                consecutive_failures=0,
+                last_success_at="2026-04-14T01:00:00+00:00",
+                last_alerted_at=None,
+            ),
+            SourceStatusRecord(
+                source_key="rss:investing",
+                source_name="Investing",
+                checkpoint_id=None,
+                checkpoint_updated_at=None,
+                last_delivered=None,
+                last_bootstrap=None,
+                last_error=failed_error,
+                recent_filtered=(),
+                consecutive_failures=2,
+                last_success_at=None,
+                last_alerted_at=None,
+            ),
+            SourceStatusRecord(
+                source_key="rss:ft",
+                source_name="FT",
+                checkpoint_id="ft-1",
+                checkpoint_updated_at="2026-04-13T01:00:00+00:00",
+                last_delivered=SourceEventRecord(
+                    source_key="rss:ft",
+                    source_name="FT",
+                    event_type="delivered",
+                    status_id="ft-1",
+                    post_url="https://www.ft.com/content/ft-1",
+                    detail="delivered to 1 chat(s)",
+                    created_at="2026-04-13T01:00:00+00:00",
+                    run_id=1,
+                ),
+                last_bootstrap=None,
+                last_error=None,
+                recent_filtered=(),
+                consecutive_failures=0,
+                last_success_at="2026-04-13T01:00:00+00:00",
+                last_alerted_at=None,
+            ),
+        ]
+
+        with (
+            mock.patch("news_bot.cli.StateStore", return_value=FakeStatusStore(statuses=statuses)),
+            mock.patch(
+                "news_bot.cli.build_sources",
+                return_value=(
+                    FakeSource("truthsocial:realDonaldTrump", "Truth Social"),
+                    FakeSource("rss:investing", "Investing"),
+                ),
+            ),
+            redirect_stdout(output),
+        ):
+            exit_code = run_status(config, limit=3)
+
+        text = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("truthsocial:realDonaldTrump (Truth Social): on", text)
+        self.assertIn("last_sent=truth-1 at=2026-04-14T01:00:00+00:00 url=https://truthsocial.com/@realDonaldTrump/1", text)
+        self.assertIn("rss:investing (Investing): failed", text)
+        self.assertIn("last_error at=2026-04-14T01:01:00+00:00 detail=RSS request failed", text)
+        self.assertIn("rss:ft (FT): off", text)
+        self.assertIn("last_sent=ft-1 at=2026-04-13T01:00:00+00:00 url=https://www.ft.com/content/ft-1", text)
 
     def test_build_notify_message_uses_custom_text_when_present(self) -> None:
         self.assertEqual(

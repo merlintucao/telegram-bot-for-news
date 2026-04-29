@@ -99,6 +99,25 @@ def _summarize_status_network_issue(source_statuses: Iterable[SourceStatusRecord
     )
 
 
+def _source_health_label(status: SourceStatusRecord | None, is_enabled: bool) -> str:
+    if not is_enabled:
+        return "off"
+    if status is not None and status.consecutive_failures > 0:
+        return "failed"
+    return "on"
+
+
+def _source_last_sent_line(status: SourceStatusRecord | None) -> str:
+    if status is None or status.last_delivered is None:
+        return "last_sent=<none>"
+
+    delivered = status.last_delivered
+    line = f"last_sent={delivered.status_id} at={delivered.created_at}"
+    if delivered.post_url:
+        line += f" url={delivered.post_url}"
+    return line
+
+
 def run_doctor(config: AppConfig, skip_network: bool, network_only: bool = False) -> int:
     ok = True
 
@@ -344,9 +363,43 @@ def run_status(config: AppConfig, limit: int, as_json: bool = False) -> int:
     if health_hint:
         print(health_hint)
 
-    print("- Sources:")
+    status_by_source = {status.source_key: status for status in source_statuses}
+    try:
+        enabled_sources = build_sources(config)
+    except ValueError:
+        enabled_sources = []
+    enabled_source_names = {
+        source.source_id: source.source_name for source in enabled_sources
+    }
+    source_keys = list(enabled_source_names)
+    source_keys.extend(
+        status.source_key
+        for status in source_statuses
+        if status.source_key not in enabled_source_names
+    )
+
+    print("- Source health:")
+    for source_key in source_keys:
+        status = status_by_source.get(source_key)
+        source_name = enabled_source_names.get(source_key)
+        if source_name is None and status is not None:
+            source_name = status.source_name
+        label = _source_health_label(status, source_key in enabled_source_names)
+        print(f"  {source_key} ({source_name or 'unknown'}): {label}")
+        print(f"    {_source_last_sent_line(status)}")
+        if label == "failed" and status is not None and status.last_error is not None:
+            error_line = f"last_error at={status.last_error.created_at}"
+            if status.last_error.detail:
+                error_line += f" detail={status.last_error.detail}"
+            print(f"    {error_line}")
+
+    print("- Source details:")
     for status in source_statuses:
-        print(f"  {status.source_key} ({status.source_name})")
+        detail_state = _source_health_label(
+            status,
+            status.source_key in enabled_source_names,
+        )
+        print(f"  {status.source_key} ({status.source_name}) status={detail_state}")
         if status.checkpoint_id:
             print(
                 "    "
