@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, replace
+from datetime import datetime, timedelta, timezone
 
 from .ap import APWorldRSSSource
 from .config import AppConfig
@@ -115,12 +116,29 @@ def _shorten_text(value: str, limit: int = 90) -> str:
     return cleaned[: limit - 3].rstrip() + "..."
 
 
+def _format_status_time_gmt7(value: str) -> str:
+    raw = value.strip()
+    if not raw:
+        return raw
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    localized = parsed.astimezone(timezone(timedelta(hours=7)))
+    return localized.strftime("%Y-%m-%d %H:%M GMT+7")
+
+
 def _source_last_sent_value(status: SourceStatusRecord | None) -> str:
     if status is None or status.last_delivered is None:
         return "<none>"
 
     delivered = status.last_delivered
-    return _shorten_text(f"{delivered.created_at} {delivered.status_id}", limit=100)
+    return _shorten_text(
+        f"{_format_status_time_gmt7(delivered.created_at)} {delivered.status_id}",
+        limit=100,
+    )
 
 
 def _count_running_bot_sessions() -> int | None:
@@ -378,7 +396,7 @@ def run_status(config: AppConfig, limit: int, as_json: bool = False) -> int:
         dry_run_suffix = " dry-run" if latest_run.dry_run else ""
         print(
             "- Latest run: "
-            f"{latest_run.status}{dry_run_suffix} at={latest_run.started_at} "
+            f"{latest_run.status}{dry_run_suffix} at={_format_status_time_gmt7(latest_run.started_at)} "
             f"sent={latest_run.sent_count} sources={latest_run.sources_processed}"
         )
 

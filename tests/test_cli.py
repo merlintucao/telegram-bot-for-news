@@ -498,11 +498,11 @@ class CLITests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("Bot sessions running: 2", text)
         self.assertIn("on     truthsocial:realDonaldTrump", text)
-        self.assertIn("last_sent=2026-04-14T01:00:00+00:00 truth-1", text)
+        self.assertIn("last_sent=2026-04-14 08:00 GMT+7 truth-1", text)
         self.assertIn("failed rss:investing", text)
         self.assertNotIn("error=RSS request failed", text)
         self.assertIn("off    rss:ft", text)
-        self.assertIn("last_sent=2026-04-13T01:00:00+00:00 ft-1", text)
+        self.assertIn("last_sent=2026-04-13 08:00 GMT+7 ft-1", text)
 
     def test_build_notify_message_uses_custom_text_when_present(self) -> None:
         self.assertEqual(
